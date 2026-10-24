@@ -14,11 +14,11 @@ from defusedxml import ElementTree as DefusedElementTree
 from pydantic import ValidationError
 from pymupdf.mupdf import FzErrorBase
 
-from reference_agent.errors import (
+from papers_agent.errors import (
     PaperNotFoundError,
     PaperSourceError,
 )
-from reference_agent.types import (
+from papers_agent.types import (
     Doi,
     LocalPath,
     NonEmptyStr,

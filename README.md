@@ -14,7 +14,7 @@ uv sync
 2. **Install the MCP server** into your pi agent:
 
 ```sh
-pi mcp add -l reference -- uv run --directory "$(pwd)" reference-agent
+pi mcp add -l papers -- uv run --directory "$(pwd)" papers
 ```
 
 This adds a project-level (`-l`) stdio server entry that runs the server
@@ -30,9 +30,9 @@ Alternatively, add it manually to `.pi/mcp.json` (project) or
 ```json
 {
   "mcpServers": {
-    "reference": {
+    "papers": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/papers-agent", "reference-agent"]
+      "args": ["run", "--directory", "/path/to/papers-agent", "papers"]
     }
   }
 }
@@ -41,7 +41,7 @@ Alternatively, add it manually to `.pi/mcp.json` (project) or
 You can also run the server directly from this repository to test it:
 
 ```sh
-uv run reference-agent
+uv run papers
 ```
 
 No external accounts or API keys are required: the arXiv API and the

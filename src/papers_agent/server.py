@@ -1,4 +1,4 @@
-"""Reference MCP server exposing scholarly paper source operations as tools.
+"""Papers MCP server exposing scholarly paper source operations as tools.
 
 Each tool dispatches to a registered paper source (e.g. arXiv). Lookup
 tools that identify a single paper (by url or doi) infer the source from
@@ -15,9 +15,9 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
-from reference_agent.errors import PaperSourceError
-from reference_agent.sources.arxiv import ArxivSource
-from reference_agent.types import (
+from papers_agent.errors import PaperSourceError
+from papers_agent.sources.arxiv import ArxivSource
+from papers_agent.types import (
     Doi,
     LocalPath,
     NonEmptyStr,
@@ -33,7 +33,7 @@ from reference_agent.types import (
 Limit = Annotated[int, Field(ge=1, le=100)]
 
 mcp = MCPServer(
-    "reference-agent",
+    "papers",
     instructions=(
         "Search scholarly paper sources (arXiv) and fetch paper "
         "metadata. Use keyword_search for keyword-based queries and "
@@ -192,7 +192,7 @@ async def get_paper_pdf_images(
 
 
 def main() -> None:
-    mcp.run()  # stdio by default; matches `pi mcp add ... -- uv run ... reference-agent`
+    mcp.run()  # stdio by default; matches `pi mcp add ... -- uv run ... papers`
 
 
 if __name__ == "__main__":

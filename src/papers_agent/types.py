@@ -13,7 +13,7 @@ from pydantic import (
     StringConstraints,
 )
 
-from reference_agent.errors import PaperSourceError
+from papers_agent.errors import PaperSourceError
 
 
 def _ensure_utc(value: datetime | str) -> datetime:
