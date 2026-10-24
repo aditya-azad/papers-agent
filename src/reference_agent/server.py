@@ -19,6 +19,7 @@ from reference_agent.errors import PaperSourceError
 from reference_agent.sources.arxiv import ArxivSource
 from reference_agent.types import (
     Doi,
+    LocalPath,
     NonEmptyStr,
     Paper,
     PaperAbstract,
@@ -38,8 +39,10 @@ mcp = MCPServer(
         "metadata. Use keyword_search for keyword-based queries, "
         "get_papers_in_date_range for date-bounded listings, "
         "get_paper_by_url/get_paper_by_doi for exact lookups (the "
-        "source is inferred from the url/doi), and "
-        "get_paper_authors/get_paper_abstract for per-field details."
+        "source is inferred from the url/doi), "
+        "get_paper_authors/get_paper_abstract for per-field details, "
+        "and download_paper_pdf/get_paper_pdf_text/get_paper_pdf_images "
+        "for pdf retrieval by doi."
     ),
 )
 
@@ -132,6 +135,33 @@ async def get_paper_abstract(
 ) -> PaperAbstract:
     """Fetch the abstract of a paper by its doi."""
     return await _run(_source_for_doi(doi), lambda s: s.get_abstract(doi))
+
+
+@mcp.tool()
+async def download_paper_pdf(
+    doi: Doi,
+    path: LocalPath,
+) -> str:
+    """Download the pdf of the paper with the given doi to the given file path."""
+    return str(await _run(_source_for_doi(doi), lambda s: s.download_pdf(doi, path)))
+
+
+@mcp.tool()
+async def get_paper_pdf_text(
+    doi: Doi,
+) -> str:
+    """Return the full text extracted from the pdf of the paper with the given doi."""
+    return await _run(_source_for_doi(doi), lambda s: s.get_pdf_text(doi))
+
+
+@mcp.tool()
+async def get_paper_pdf_images(
+    doi: Doi,
+    path: LocalPath,
+) -> list[str]:
+    """Extract the images of the given paper's pdf into the given directory and return their file paths."""
+    paths = await _run(_source_for_doi(doi), lambda s: s.get_pdf_images(doi, path))
+    return [str(image_path) for image_path in paths]
 
 
 def main() -> None:

@@ -1,6 +1,7 @@
 import re
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, ClassVar, Literal
 
 from pydantic import (
@@ -33,6 +34,13 @@ def _require_non_empty(value: str) -> str:
 
 def _validate_url(value: str) -> str:
     return str(HttpUrl(value)).rstrip("/")
+
+
+def _expand_path(value: Path | str) -> Path:
+    return Path(value).expanduser()
+
+
+LocalPath = Annotated[Path, BeforeValidator(_expand_path)]
 
 
 ProperWhitespacedStr = Annotated[str, BeforeValidator(_fix_spacing)]
@@ -146,3 +154,15 @@ class PaperSource(ABC):
 
     async def get_abstract(self, doi: Doi) -> PaperAbstract:
         return (await self.get_paper_by_doi(doi)).abstract
+
+    @abstractmethod
+    async def download_pdf(self, doi: Doi, path: LocalPath) -> Path:
+        """Download the pdf of the paper with the given doi to the given path."""
+
+    @abstractmethod
+    async def get_pdf_text(self, doi: Doi) -> str:
+        """Return the full text extracted from the pdf of the given paper."""
+
+    @abstractmethod
+    async def get_pdf_images(self, doi: Doi, path: LocalPath) -> list[Path]:
+        """Extract the images of the given paper's pdf into the given directory."""

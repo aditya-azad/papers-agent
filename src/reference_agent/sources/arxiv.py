@@ -1,11 +1,17 @@
+import asyncio
+import os
 import re
 import secrets
+import tempfile
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
+import pymupdf
 from defusedxml import ElementTree as DefusedElementTree
 from pydantic import ValidationError
+from pymupdf.mupdf import FzErrorBase
 
 from reference_agent.errors import (
     PaperNotFoundError,
@@ -13,6 +19,7 @@ from reference_agent.errors import (
 )
 from reference_agent.types import (
     Doi,
+    LocalPath,
     NonEmptyStr,
     Paper,
     PaperSource,
@@ -22,7 +29,10 @@ from reference_agent.types import (
 
 _BASE_URL = "https://export.arxiv.org/api/query"
 _OAI_BASE_URL = "https://oaipmh.arxiv.org/oai"
+_PDF_URL_TEMPLATE = "https://arxiv.org/pdf/{arxiv_id}"
+_PDF_MAGIC = b"%PDF"
 _REQUEST_TIMEOUT_SECONDS = 30.0
+_PDF_REQUEST_TIMEOUT_SECONDS = 120.0
 _ATOM_NAMESPACE = "http://www.w3.org/2005/Atom"
 _ARXIV_NAMESPACE = "http://arxiv.org/schemas/atom"
 _OAI_PMH_NAMESPACE = "http://www.openarchives.org/OAI/2.0/"
@@ -46,6 +56,78 @@ _ABS_URL_PATTERN = re.compile(
 
 def _random_email() -> str:
     return f"{secrets.token_hex(12)}@example.org"
+
+
+def _arxiv_id_from_doi(doi: Doi) -> str | None:
+    normalized = doi.lower()
+    if not normalized.startswith(_ARXIV_DOI_PREFIX):
+        return None
+    arxiv_id = normalized.removeprefix(_ARXIV_DOI_PREFIX)
+    if _ARXIV_ID_PATTERN.fullmatch(arxiv_id) is None:
+        return None
+    return arxiv_id
+
+
+def _arxiv_id_for_doi(doi: Doi) -> str:
+    arxiv_id = _arxiv_id_from_doi(doi)
+    if arxiv_id is None:
+        raise PaperNotFoundError(f"no arxiv paper for doi {doi}")
+    return arxiv_id
+
+
+class _TempPdf:
+    """Temporary file for a downloaded pdf, removed when the context exits."""
+
+    def __init__(self) -> None:
+        fd, name = tempfile.mkstemp(suffix=".pdf", prefix="papers-agent-")
+        os.close(fd)
+        self.path = Path(name)
+
+    def __enter__(self) -> Path:
+        return self.path
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.path.unlink(missing_ok=True)
+
+
+def _extract_pdf_text(path: Path) -> str:
+    try:
+        with pymupdf.open(path) as doc:
+            return "\n".join(page.get_text() for page in doc).strip()
+    except Exception as exc:
+        raise PaperSourceError("failed to extract text from pdf") from exc
+
+
+def _extract_pdf_images(
+    path: Path, images_dir: Path, prefix: str
+) -> list[Path]:
+    images_dir.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = []
+    try:
+        doc = pymupdf.open(path)
+    except FzErrorBase as exc:
+        raise PaperSourceError("failed to open pdf") from exc
+    with doc:
+        for page_number, page in enumerate(doc, start=1):
+            seen_xrefs: set[int] = set()
+            for image_index, image in enumerate(page.get_images(full=True)):
+                xref = image[0]
+                if xref in seen_xrefs:
+                    continue
+                seen_xrefs.add(xref)
+                try:
+                    pixmap = pymupdf.Pixmap(doc, xref)
+                except FzErrorBase:
+                    continue
+                try:
+                    if pixmap.n - pixmap.alpha > 3:
+                        pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
+                    file = images_dir / f"{prefix}_p{page_number:03d}_i{image_index:02d}.png"
+                    pixmap.save(str(file))
+                    saved.append(file)
+                finally:
+                    pixmap = None
+    return saved
 
 
 class ArxivSource(PaperSource):
@@ -101,17 +183,63 @@ class ArxivSource(PaperSource):
         return await self._get_by_id(match.group(1).lower())
 
     async def get_paper_by_doi(self, doi: Doi) -> Paper:
-        normalized = doi.lower()
-        if not normalized.startswith(_ARXIV_DOI_PREFIX):
-            raise PaperNotFoundError(
-                f"no arxiv paper for doi {doi}"
+        return await self._get_by_id(_arxiv_id_for_doi(doi))
+
+    async def download_pdf(self, doi: Doi, path: LocalPath) -> Path:
+        arxiv_id = _arxiv_id_for_doi(doi)
+        return await self._download_pdf_by_id(arxiv_id, Path(path))
+
+    async def get_pdf_text(self, doi: Doi) -> str:
+        arxiv_id = _arxiv_id_for_doi(doi)
+        with self._temp_pdf() as tmp_path:
+            await self._download_pdf_by_id(arxiv_id, tmp_path)
+            return await asyncio.to_thread(_extract_pdf_text, tmp_path)
+
+    async def get_pdf_images(self, doi: Doi, path: LocalPath) -> list[Path]:
+        arxiv_id = _arxiv_id_for_doi(doi)
+        images_dir = Path(path)
+        prefix = arxiv_id.replace("/", "-")
+        with self._temp_pdf() as tmp_path:
+            await self._download_pdf_by_id(arxiv_id, tmp_path)
+            return await asyncio.to_thread(
+                _extract_pdf_images, tmp_path, images_dir, prefix
             )
-        arxiv_id = normalized.removeprefix(_ARXIV_DOI_PREFIX)
-        if _ARXIV_ID_PATTERN.fullmatch(arxiv_id) is None:
-            raise PaperNotFoundError(
-                f"no arxiv paper for doi {doi}"
-            )
-        return await self._get_by_id(arxiv_id)
+
+    @staticmethod
+    def _temp_pdf() -> _TempPdf:
+        return _TempPdf()
+
+    async def _download_pdf_by_id(self, arxiv_id: str, path: Path) -> Path:
+        url = _PDF_URL_TEMPLATE.format(arxiv_id=arxiv_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_name(f"{path.name}.{secrets.token_hex(6)}.part")
+        complete = False
+        try:
+            headers = {"User-Agent": f"{_USER_AGENT} (mailto:{_random_email()})"}
+            async with httpx.AsyncClient(
+                timeout=_PDF_REQUEST_TIMEOUT_SECONDS, follow_redirects=True
+            ) as client:
+                try:
+                    async with client.stream("GET", url, headers=headers) as response:
+                        if response.status_code != 200:
+                            raise PaperSourceError(
+                                f"arxiv returned status {response.status_code}"
+                            )
+                        with tmp_path.open("wb") as fh:
+                            async for chunk in response.aiter_bytes():
+                                fh.write(chunk)
+                except httpx.HTTPError as exc:
+                    raise PaperSourceError("arxiv pdf request failed") from exc
+            with tmp_path.open("rb") as fh:
+                magic = fh.read(len(_PDF_MAGIC))
+            if magic != _PDF_MAGIC:
+                raise PaperSourceError(f"arxiv did not return a pdf for {url}")
+            tmp_path.replace(path)
+            complete = True
+            return path
+        finally:
+            if not complete:
+                tmp_path.unlink(missing_ok=True)
 
     async def _get_by_id(self, arxiv_id: str) -> Paper:
         base_id = _VERSION_SUFFIX_PATTERN.sub("", arxiv_id.lower())
