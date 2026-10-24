@@ -42,7 +42,8 @@ mcp = MCPServer(
         "get_papers_in_date_range for date-bounded listings, "
         "get_paper_by_url/get_paper_by_doi for exact lookups (the "
         "source is inferred from the url/doi), "
-        "get_paper_authors/get_paper_abstract for per-field details, "
+        "get_paper_authors/get_paper_abstract/get_paper_references for "
+        "per-field details, "
         "and download_paper_pdf/get_paper_pdf_text/get_paper_pdf_images "
         "for pdf retrieval by doi."
     ),
@@ -147,6 +148,14 @@ async def get_paper_abstract(
 ) -> PaperAbstract:
     """Fetch the abstract of a paper by its doi."""
     return await _run(_source_for_doi(doi), lambda s: s.get_abstract(doi))
+
+
+@mcp.tool()
+async def get_paper_references(
+    doi: Doi,
+) -> list[str]:
+    """Fetch the bibliography of the paper with the given doi as raw reference strings."""
+    return await _run(_source_for_doi(doi), lambda s: s.get_references(doi))
 
 
 @mcp.tool()

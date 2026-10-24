@@ -136,13 +136,9 @@ class PaperSource(ABC):
         """Whether this source can resolve the given doi."""
 
     @abstractmethod
-    async def search(
-        self, keyword: NonEmptyStr, limit: int
-    ) -> list[Paper]: ...
+    async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]: ...
 
-    async def semantic_search(
-        self, query: NonEmptyStr, limit: int
-    ) -> list[Paper]:
+    async def semantic_search(self, query: NonEmptyStr, limit: int) -> list[Paper]:
         """Search papers by a natural-language semantic description."""
         raise PaperSourceError(
             f"{type(self).__name__} does not support semantic search"
@@ -164,6 +160,12 @@ class PaperSource(ABC):
 
     async def get_abstract(self, doi: Doi) -> PaperAbstract:
         return (await self.get_paper_by_doi(doi)).abstract
+
+    async def get_references(self, doi: Doi) -> list[str]:
+        """Return the bibliography entries of the given paper as raw strings."""
+        raise PaperSourceError(
+            f"{type(self).__name__} does not support reference extraction"
+        )
 
     @abstractmethod
     async def download_pdf(self, doi: Doi, path: LocalPath) -> Path:

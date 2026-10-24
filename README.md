@@ -58,6 +58,7 @@ alphaXiv embedding API are public, though both are rate-limited.
 | `get_paper_by_doi` | Fetch a single paper by its doi; the source is inferred from the doi. |
 | `get_paper_authors` | Fetch the authors of a paper by doi. |
 | `get_paper_abstract` | Fetch the abstract of a paper by doi. |
+| `get_paper_references` | Fetch the bibliography of a paper (by doi) as raw reference strings. |
 | `download_paper_pdf` | Download the pdf of a paper (by doi) to a given file path. |
 | `get_paper_pdf_text` | Return the full text extracted from the pdf of a paper (by doi). |
 | `get_paper_pdf_images` | Extract the images of a paper's pdf (by doi) into a directory and return their file paths. |

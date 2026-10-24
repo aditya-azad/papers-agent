@@ -5,6 +5,7 @@ import secrets
 import tempfile
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from pathlib import Path
 
 import httpx
@@ -30,6 +31,7 @@ from reference_agent.types import (
 _BASE_URL = "https://export.arxiv.org/api/query"
 _OAI_BASE_URL = "https://oaipmh.arxiv.org/oai"
 _PDF_URL_TEMPLATE = "https://arxiv.org/pdf/{arxiv_id}"
+_HTML_URL_TEMPLATE = "https://arxiv.org/html/{arxiv_id}"
 _PDF_MAGIC = b"%PDF"
 _REQUEST_TIMEOUT_SECONDS = 30.0
 _PDF_REQUEST_TIMEOUT_SECONDS = 120.0
@@ -106,6 +108,72 @@ class _TempPdf:
         self.path.unlink(missing_ok=True)
 
 
+class _BibliographyExtractor(HTMLParser):
+    """Collect the text of the bibliography items of an arxiv html page."""
+
+    _BIB_ITEM_CLASS = "ltx_bibitem"
+    _BIB_TAG_CLASS = "ltx_tag_bibitem"
+    _SEPARATING_TAGS = frozenset(
+        {"p", "li", "span", "div", "td", "br", "h1", "h2", "h3", "h4"}
+    )
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.references: list[str] = []
+        self._in_item = False
+        self._skip_depth = 0
+        self._parts: list[str] = []
+
+    def _classes(self, attrs: list[tuple[str, str | None]]) -> list[str]:
+        for name, value in attrs:
+            if name == "class" and value:
+                return value.split()
+        return []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        classes = self._classes(attrs)
+        if tag == "li" and self._BIB_ITEM_CLASS in classes:
+            self._finish_item()
+            self._in_item = True
+        elif self._in_item:
+            if self._BIB_TAG_CLASS in classes:
+                self._skip_depth += 1
+            elif tag in self._SEPARATING_TAGS:
+                self._parts.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if not self._in_item:
+            return
+        if self._skip_depth and tag == "span":
+            self._skip_depth -= 1
+        elif tag == "li":
+            self._finish_item()
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self._in_item and tag in self._SEPARATING_TAGS:
+            self._parts.append(" ")
+
+    def handle_data(self, data: str) -> None:
+        if self._in_item and not self._skip_depth:
+            self._parts.append(data)
+
+    def _finish_item(self) -> None:
+        if self._in_item:
+            text = " ".join("".join(self._parts).split())
+            if text:
+                self.references.append(text)
+        self._in_item = False
+        self._skip_depth = 0
+        self._parts = []
+
+
+def _extract_references(html: str) -> list[str]:
+    extractor = _BibliographyExtractor()
+    extractor.feed(html)
+    extractor._finish_item()
+    return extractor.references
+
+
 def _extract_pdf_text(path: Path) -> str:
     try:
         with pymupdf.open(path) as doc:
@@ -114,9 +182,7 @@ def _extract_pdf_text(path: Path) -> str:
         raise PaperSourceError("failed to extract text from pdf") from exc
 
 
-def _extract_pdf_images(
-    path: Path, images_dir: Path, prefix: str
-) -> list[Path]:
+def _extract_pdf_images(path: Path, images_dir: Path, prefix: str) -> list[Path]:
     images_dir.mkdir(parents=True, exist_ok=True)
     saved: list[Path] = []
     try:
@@ -138,7 +204,10 @@ def _extract_pdf_images(
                 try:
                     if pixmap.n - pixmap.alpha > 3:
                         pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
-                    file = images_dir / f"{prefix}_p{page_number:03d}_i{image_index:02d}.png"
+                    file = (
+                        images_dir
+                        / f"{prefix}_p{page_number:03d}_i{image_index:02d}.png"
+                    )
                     pixmap.save(str(file))
                     saved.append(file)
                 finally:
@@ -149,9 +218,7 @@ def _extract_pdf_images(
 class ArxivSource(PaperSource):
     source = "arxiv"
 
-    async def search(
-        self, keyword: NonEmptyStr, limit: int
-    ) -> list[Paper]:
+    async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
         data = await self._request(
             {
                 "search_query": f"all:{keyword}",
@@ -162,9 +229,7 @@ class ArxivSource(PaperSource):
         )
         return [self._paper_from_entry(entry) for entry in self._entries(data)]
 
-    async def semantic_search(
-        self, query: NonEmptyStr, limit: int
-    ) -> list[Paper]:
+    async def semantic_search(self, query: NonEmptyStr, limit: int) -> list[Paper]:
         """Search arxiv semantically via the alphaxiv embedding discovery api.
 
         alphaxiv ranks titles/abstracts by embedding similarity over its own
@@ -268,9 +333,7 @@ class ArxivSource(PaperSource):
     async def get_paper_by_url(self, url: Url) -> Paper:
         match = _ABS_URL_PATTERN.fullmatch(url)
         if match is None:
-            raise PaperNotFoundError(
-                f"no arxiv paper for url {url}"
-            )
+            raise PaperNotFoundError(f"no arxiv paper for url {url}")
         return await self._get_by_id(match.group(1).lower())
 
     async def get_paper_by_doi(self, doi: Doi) -> Paper:
@@ -285,6 +348,34 @@ class ArxivSource(PaperSource):
         with self._temp_pdf() as tmp_path:
             await self._download_pdf_by_id(arxiv_id, tmp_path)
             return await asyncio.to_thread(_extract_pdf_text, tmp_path)
+
+    async def get_references(self, doi: Doi) -> list[str]:
+        """Return the bibliography entries of the given paper as raw strings.
+
+        Parses the html rendering arxiv generates for recent submissions.
+        Papers without an html version (older submissions or pdf-only
+        uploads) raise a PaperSourceError.
+        """
+        arxiv_id = _VERSION_SUFFIX_PATTERN.sub("", _arxiv_id_for_doi(doi).lower())
+        url = _HTML_URL_TEMPLATE.format(arxiv_id=arxiv_id)
+        headers = {"User-Agent": f"{_USER_AGENT} (mailto:{_random_email()})"}
+        async with httpx.AsyncClient(
+            timeout=_REQUEST_TIMEOUT_SECONDS, follow_redirects=True
+        ) as client:
+            try:
+                response = await client.get(url, headers=headers)
+            except httpx.HTTPError as exc:
+                raise PaperSourceError("arxiv html request failed") from exc
+        if response.status_code == 404:
+            raise PaperSourceError(f"arxiv has no html version for paper {arxiv_id}")
+        if response.status_code != 200:
+            raise PaperSourceError(f"arxiv returned status {response.status_code}")
+        references = await asyncio.to_thread(_extract_references, response.text)
+        if not references:
+            raise PaperSourceError(
+                f"no bibliography found in the arxiv html version of {arxiv_id}"
+            )
+        return references
 
     async def get_pdf_images(self, doi: Doi, path: LocalPath) -> list[Path]:
         arxiv_id = _arxiv_id_for_doi(doi)
@@ -367,9 +458,7 @@ class ArxivSource(PaperSource):
         if error is not None:
             code = error.get("code") or "unknown"
             if code == _OAI_NOT_FOUND_ERROR_CODE:
-                raise PaperNotFoundError(
-                    f"no arxiv paper for id {base_id}"
-                )
+                raise PaperNotFoundError(f"no arxiv paper for id {base_id}")
             raise PaperSourceError(
                 f"arxiv oai error {code}: {self._element_text(error)}"
             )
@@ -393,9 +482,7 @@ class ArxivSource(PaperSource):
     def _entries(self, data: str) -> list[ET.Element]:
         return self._parse(data).findall(f"{{{_ATOM_NAMESPACE}}}entry")
 
-    def _paper_from_oai_metadata(
-        self, metadata: ET.Element, base_id: str
-    ) -> Paper:
+    def _paper_from_oai_metadata(self, metadata: ET.Element, base_id: str) -> Paper:
         record_id = self._required_text(
             metadata, f"{{{_OAI_ARXIV_NAMESPACE}}}id"
         ).lower()
