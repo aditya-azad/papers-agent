@@ -1,7 +1,7 @@
 [project]
 name = "papers-agent"
 version = "0.1.0"
-description = "Add your description here"
+description = "MCP server exposing scholarly paper source operations as tools"
 readme = "README.md"
 authors = [
     { name = "Aditya Azad", email = "adityaazad121@gmail.com" }
