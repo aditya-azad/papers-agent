@@ -1,0 +1,30 @@
+[project]
+name = "papers-agent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Aditya Azad", email = "adityaazad121@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "httpx>=0.28.1",
+    "defusedxml>=0.7.1",
+    "mcp>=2.3.0",
+]
+
+[project.scripts]
+reference-agent = "reference_agent:main"
+
+[build-system]
+requires = ["uv_build>=0.13.5,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "reference_agent"
+
+[dependency-groups]
+dev = [
+    "pyrefly>=1.4.0",
+    "ruff>=0.17.2",
+]
