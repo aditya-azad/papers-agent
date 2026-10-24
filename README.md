@@ -60,12 +60,12 @@ uv run reference-agent
 
 | Tool | Description |
 |---|---|
-| `search_papers` | Free-text search against a paper source (arXiv). |
+| `keyword_search` | Keyword search against a paper source (arXiv). |
 | `get_papers_in_date_range` | List papers from a source published within a date range. |
 | `get_paper_by_url` | Fetch a single paper by its url. |
 | `get_paper_by_doi` | Fetch a single paper by its doi. |
 | `get_paper_authors` | Fetch the authors of a paper by doi. |
-| `get_paper_description` | Fetch the description (abstract) of a paper by doi. |
+| `get_paper_abstract` | Fetch the abstract of a paper by doi. |
 
 ## Install the skills into your pi agent
 

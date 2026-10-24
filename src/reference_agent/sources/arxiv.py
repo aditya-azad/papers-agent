@@ -11,14 +11,14 @@ from reference_agent.errors import (
     PaperNotFoundError,
     PaperSourceError,
 )
-from reference_agent.source import PaperSource
-from reference_agent.sources.schemas import (
+from reference_agent.types import (
     Doi,
     Paper,
     PaperDateRangeQuery,
     PaperSearchQuery,
+    PaperSource,
+    Url,
 )
-from reference_agent.types import Url
 
 _BASE_URL = "https://export.arxiv.org/api/query"
 _OAI_BASE_URL = "https://oaipmh.arxiv.org/oai"
@@ -56,7 +56,7 @@ class ArxivSource(PaperSource):
     ) -> list[Paper]:
         data = await self._request(
             {
-                "search_query": f"all:{query.text}",
+                "search_query": f"all:{query.keyword}",
                 "max_results": str(query.limit),
                 "sortBy": "relevance",
                 "sortOrder": "descending",
@@ -79,6 +79,18 @@ class ArxivSource(PaperSource):
             }
         )
         return [self._paper_from_entry(entry) for entry in self._entries(data)]
+
+    @classmethod
+    def handles_url(cls, url: Url) -> bool:
+        return _ABS_URL_PATTERN.fullmatch(url) is not None
+
+    @classmethod
+    def handles_doi(cls, doi: Doi) -> bool:
+        normalized = doi.lower()
+        if not normalized.startswith(_ARXIV_DOI_PREFIX):
+            return False
+        arxiv_id = normalized.removeprefix(_ARXIV_DOI_PREFIX)
+        return _ARXIV_ID_PATTERN.fullmatch(arxiv_id) is not None
 
     async def get_paper_by_url(self, url: Url) -> Paper:
         match = _ABS_URL_PATTERN.fullmatch(url)
@@ -185,7 +197,7 @@ class ArxivSource(PaperSource):
                 doi=doi,
                 authors=self._oai_authors(metadata),
                 publisher=_PUBLISHER,
-                description=self._required_text(
+                abstract=self._required_text(
                     metadata, f"{{{_OAI_ARXIV_NAMESPACE}}}abstract"
                 ),
                 published_at=self._parse_oai_date(created),
@@ -242,7 +254,7 @@ class ArxivSource(PaperSource):
                     )
                 ],
                 publisher=_PUBLISHER,
-                description=self._required_text(entry, f"{{{_ATOM_NAMESPACE}}}summary"),
+                abstract=self._required_text(entry, f"{{{_ATOM_NAMESPACE}}}summary"),
                 published_at=self._required_text(
                     entry, f"{{{_ATOM_NAMESPACE}}}published"
                 ),
