@@ -14,7 +14,7 @@ uv sync
 2. **Install the MCP server** into your pi agent:
 
 ```sh
-pi mcp add -l papers -- uv run --directory "$(pwd)" papers
+pi mcp add -l papers -- uv run --directory "$(pwd)" papers-agent
 ```
 
 This adds a project-level (`-l`) stdio server entry that runs the server
