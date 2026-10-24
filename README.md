@@ -51,6 +51,7 @@ alphaXiv embedding API are public, though both are rate-limited.
 
 | Tool | Description |
 |---|---|
+| `get_sources` | List the names of all registered paper sources. |
 | `keyword_search` | Keyword search against a paper source (arXiv). |
 | `semantic_search` | Semantic search by natural-language description (arXiv via alphaXiv embeddings). |
 | `get_papers_in_date_range` | List papers from a source published within a date range. |

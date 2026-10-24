@@ -176,6 +176,12 @@ async def get_paper_pdf_text(
 
 
 @mcp.tool()
+def get_sources() -> list[str]:
+    """List the names of all registered paper sources."""
+    return list(_sources)
+
+
+@mcp.tool()
 async def get_paper_pdf_images(
     doi: Doi,
     path: LocalPath,

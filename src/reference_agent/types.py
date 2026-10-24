@@ -50,7 +50,7 @@ UTCDatetime = Annotated[datetime, BeforeValidator(_ensure_utc)]
 NonEmptyStr = Annotated[ProperWhitespacedStr, AfterValidator(_require_non_empty)]
 Url = Annotated[NonEmptyStr, AfterValidator(_validate_url)]
 
-PaperSourceName = Literal["arxiv", "pubmed", "biorxiv", "openalex"]
+PaperSourceName = Literal["arxiv"]
 
 MAX_PAPER_NAME_LENGTH = 255
 MAX_PAPER_ABSTRACT_LENGTH = 4096
