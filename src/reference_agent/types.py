@@ -10,7 +10,6 @@ from pydantic import (
     Field,
     HttpUrl,
     StringConstraints,
-    model_validator,
 )
 
 
@@ -102,23 +101,6 @@ Doi = Annotated[
 ]
 
 
-class PaperSearchQuery(BaseModel):
-    keyword: NonEmptyStr
-    limit: int = Field(ge=1, le=100)
-
-
-class PaperDateRangeQuery(BaseModel):
-    start: UTCDatetime
-    end: UTCDatetime
-    limit: int = Field(ge=1, le=100)
-
-    @model_validator(mode="after")
-    def _check_order(self) -> PaperDateRangeQuery:
-        if self.end <= self.start:
-            raise ValueError("end must be after start")
-        return self
-
-
 class Paper(BaseModel):
     source: PaperSourceName
     name: str
@@ -145,12 +127,12 @@ class PaperSource(ABC):
 
     @abstractmethod
     async def search(
-        self, query: PaperSearchQuery
+        self, keyword: NonEmptyStr, limit: int
     ) -> list[Paper]: ...
 
     @abstractmethod
     async def get_papers_in_date_range(
-        self, query: PaperDateRangeQuery
+        self, start: UTCDatetime, end: UTCDatetime, limit: int
     ) -> list[Paper]: ...
 
     @abstractmethod

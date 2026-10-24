@@ -13,7 +13,7 @@ from typing import Annotated
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import Field, ValidationError
+from pydantic import Field
 
 from reference_agent.errors import PaperSourceError
 from reference_agent.sources.arxiv import ArxivSource
@@ -23,8 +23,6 @@ from reference_agent.types import (
     Paper,
     PaperAbstract,
     PaperAuthors,
-    PaperDateRangeQuery,
-    PaperSearchQuery,
     PaperSource,
     PaperSourceName,
     Url,
@@ -86,11 +84,7 @@ async def keyword_search(
     limit: Limit,
 ) -> list[Paper]:
     """Search a paper source by keyword."""
-    try:
-        query = PaperSearchQuery(keyword=keyword, limit=limit)
-    except ValidationError as exc:
-        raise ToolError(str(exc)) from exc
-    return await _run(_source(source), lambda s: s.search(query))
+    return await _run(_source(source), lambda s: s.search(keyword, limit))
 
 
 @mcp.tool()
@@ -101,11 +95,11 @@ async def get_papers_in_date_range(
     limit: Limit,
 ) -> list[Paper]:
     """List papers from a paper source published within a date range."""
-    try:
-        query = PaperDateRangeQuery(start=start, end=end, limit=limit)
-    except ValidationError as exc:
-        raise ToolError(str(exc)) from exc
-    return await _run(_source(source), lambda s: s.get_papers_in_date_range(query))
+    if end <= start:
+        raise ToolError("end must be after start")
+    return await _run(
+        _source(source), lambda s: s.get_papers_in_date_range(start, end, limit)
+    )
 
 
 @mcp.tool()

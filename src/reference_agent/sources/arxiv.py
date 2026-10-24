@@ -13,11 +13,11 @@ from reference_agent.errors import (
 )
 from reference_agent.types import (
     Doi,
+    NonEmptyStr,
     Paper,
-    PaperDateRangeQuery,
-    PaperSearchQuery,
     PaperSource,
     Url,
+    UTCDatetime,
 )
 
 _BASE_URL = "https://export.arxiv.org/api/query"
@@ -52,12 +52,12 @@ class ArxivSource(PaperSource):
     source = "arxiv"
 
     async def search(
-        self, query: PaperSearchQuery
+        self, keyword: NonEmptyStr, limit: int
     ) -> list[Paper]:
         data = await self._request(
             {
-                "search_query": f"all:{query.keyword}",
-                "max_results": str(query.limit),
+                "search_query": f"all:{keyword}",
+                "max_results": str(limit),
                 "sortBy": "relevance",
                 "sortOrder": "descending",
             }
@@ -65,15 +65,15 @@ class ArxivSource(PaperSource):
         return [self._paper_from_entry(entry) for entry in self._entries(data)]
 
     async def get_papers_in_date_range(
-        self, query: PaperDateRangeQuery
+        self, start: UTCDatetime, end: UTCDatetime, limit: int
     ) -> list[Paper]:
         data = await self._request(
             {
                 "search_query": (
-                    f"submittedDate:[{query.start.strftime(_ARXIV_DATE_FORMAT)}"
-                    f" TO {query.end.strftime(_ARXIV_DATE_FORMAT)}]"
+                    f"submittedDate:[{start.strftime(_ARXIV_DATE_FORMAT)}"
+                    f" TO {end.strftime(_ARXIV_DATE_FORMAT)}]"
                 ),
-                "max_results": str(query.limit),
+                "max_results": str(limit),
                 "sortBy": "submittedDate",
                 "sortOrder": "descending",
             }
