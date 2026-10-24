@@ -8,6 +8,8 @@ failed upstream request, missing paper, invalid date range) are surfaced
 as tool errors so agents can read the message and recover.
 """
 
+import argparse
+import os
 from collections.abc import Awaitable, Callable
 from typing import Annotated
 
@@ -192,7 +194,28 @@ async def get_paper_pdf_images(
 
 
 def main() -> None:
-    mcp.run()  # stdio by default; matches `pi mcp add ... -- uv run ... papers`
+    parser = argparse.ArgumentParser(description="Papers MCP server")
+    parser.add_argument(
+        "--http",
+        action="store_true",
+        help="serve over Streamable HTTP instead of stdio",
+    )
+    parser.add_argument(
+        "--host",
+        default=os.environ.get("PAPERS_AGENT_HOST", "127.0.0.1"),
+        help="HTTP bind host (HTTP mode only; default 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("PAPERS_AGENT_PORT", "8000")),
+        help="HTTP bind port (HTTP mode only; default 8000)",
+    )
+    args = parser.parse_args()
+    if args.http:
+        mcp.run(transport="streamable-http", host=args.host, port=args.port)
+    else:
+        mcp.run()  # stdio by default; matches `pi mcp add ... -- uv run ... papers`
 
 
 if __name__ == "__main__":
