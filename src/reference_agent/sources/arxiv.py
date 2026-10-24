@@ -48,6 +48,12 @@ _ARXIV_DATE_FORMAT = "%Y%m%d%H%M"
 _ARXIV_ID_PATTERN_TEXT = r"(?:[a-z.-]+/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?"
 _ARXIV_ID_PATTERN = re.compile(_ARXIV_ID_PATTERN_TEXT, re.IGNORECASE)
 _VERSION_SUFFIX_PATTERN = re.compile(r"v\d+$", re.IGNORECASE)
+_ALPHAXIV_API_URL = "https://api.alphaxiv.org"
+_ALPHAXIV_DISCOVER_PATH = "/search/v2/paper/discover/embedding"
+_ALPHAXIV_USER_AGENT = "papers-agent/0.1.0"
+_ALPHAXIV_MAX_ATTEMPTS = 3
+_ALPHAXIV_MAX_RETRY_WAIT_SECONDS = 5.0
+_HTTP_TOO_MANY_REQUESTS = 429
 _ABS_URL_PATTERN = re.compile(
     rf"^https?://(?:www\.)?arxiv\.org/abs/({_ARXIV_ID_PATTERN_TEXT})$",
     re.IGNORECASE,
@@ -56,6 +62,16 @@ _ABS_URL_PATTERN = re.compile(
 
 def _random_email() -> str:
     return f"{secrets.token_hex(12)}@example.org"
+
+
+def _retry_after_seconds(value: str | None) -> float | None:
+    """Retry-After as delta-seconds; http-dates fall back to the default backoff."""
+    if not value:
+        return None
+    try:
+        return max(float(value), 0.0)
+    except ValueError:
+        return None
 
 
 def _arxiv_id_from_doi(doi: Doi) -> str | None:
@@ -145,6 +161,81 @@ class ArxivSource(PaperSource):
             }
         )
         return [self._paper_from_entry(entry) for entry in self._entries(data)]
+
+    async def semantic_search(
+        self, query: NonEmptyStr, limit: int
+    ) -> list[Paper]:
+        """Search arxiv semantically via the alphaxiv embedding discovery api.
+
+        alphaxiv ranks titles/abstracts by embedding similarity over its own
+        fixed server-side candidate pool, so `limit` only caps the hydrated
+        results. Hits carry arxiv ids but no authors, so each hit is resolved
+        against the arxiv export api (one batched id_list request) to build
+        full papers, preserving alphaxiv's ranking order.
+        """
+        arxiv_ids = (await self._alphaxiv_semantic_ids(query))[:limit]
+        if not arxiv_ids:
+            return []
+        papers = await self._papers_by_ids(arxiv_ids)
+        return [paper for arxiv_id in arxiv_ids if (paper := papers.get(arxiv_id))]
+
+    async def _alphaxiv_semantic_ids(self, query: str) -> list[str]:
+        base_url = os.environ.get("ALPHAXIV_API_URL") or _ALPHAXIV_API_URL
+        headers = {"User-Agent": _ALPHAXIV_USER_AGENT}
+        async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS) as client:
+            for attempt in range(1, _ALPHAXIV_MAX_ATTEMPTS + 1):
+                try:
+                    response = await client.get(
+                        f"{base_url}{_ALPHAXIV_DISCOVER_PATH}",
+                        params={"q": query, "prioritize": "default"},
+                        headers=headers,
+                    )
+                except httpx.HTTPError as exc:
+                    raise PaperSourceError("alphaxiv request failed") from exc
+                if response.status_code != _HTTP_TOO_MANY_REQUESTS:
+                    break
+                retry_after = _retry_after_seconds(response.headers.get("Retry-After"))
+                if attempt == _ALPHAXIV_MAX_ATTEMPTS or (
+                    retry_after is not None
+                    and retry_after > _ALPHAXIV_MAX_RETRY_WAIT_SECONDS
+                ):
+                    break
+                await asyncio.sleep(retry_after if retry_after is not None else attempt)
+        if response.status_code == _HTTP_TOO_MANY_REQUESTS:
+            raise PaperSourceError(
+                "alphaxiv is rate-limiting requests "
+                f"(status {_HTTP_TOO_MANY_REQUESTS}); retry later"
+            )
+        if response.status_code != 200:
+            raise PaperSourceError(f"alphaxiv returned status {response.status_code}")
+        try:
+            hits = response.json()
+        except ValueError as exc:
+            raise PaperSourceError("invalid alphaxiv response") from exc
+        if not isinstance(hits, list):
+            raise PaperSourceError("invalid alphaxiv response")
+        arxiv_ids: list[str] = []
+        for hit in hits:
+            paper_id = hit.get("paperId") if isinstance(hit, dict) else None
+            if not isinstance(paper_id, str) or not paper_id:
+                continue
+            arxiv_id = _VERSION_SUFFIX_PATTERN.sub("", paper_id.lower())
+            if _ARXIV_ID_PATTERN.fullmatch(arxiv_id) and arxiv_id not in arxiv_ids:
+                arxiv_ids.append(arxiv_id)
+        return arxiv_ids
+
+    async def _papers_by_ids(self, arxiv_ids: list[str]) -> dict[str, Paper]:
+        data = await self._request(
+            {
+                "id_list": ",".join(arxiv_ids),
+                "max_results": str(len(arxiv_ids)),
+            }
+        )
+        papers: dict[str, Paper] = {}
+        for entry in self._entries(data):
+            paper = self._paper_from_entry(entry)
+            papers[paper.url.rsplit("/", 1)[-1]] = paper
+        return papers
 
     async def get_papers_in_date_range(
         self, start: UTCDatetime, end: UTCDatetime, limit: int

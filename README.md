@@ -1,15 +1,6 @@
 # Papers Agent
 
-An MCP server that exposes [describe the domain] operations as tools, so
-agents can [describe capabilities]. All operations are restricted to
-[describe any policy/scope].
-
-Tool-use guidance (how to use the tools well, conventions, and which tools
-to call when) lives in companion skills for the
-[pi](https://github.com/badlogic/pi-mono) agent, shipped in this repository
-under `skills/`. The skills are intentionally not placed in the
-auto-discovered project skills directory (`.agents/skills/`): they are meant
-to be installed into your pi agent, not tied to this checkout.
+An MCP server that exposes scholarly paper source operations as tools.
 
 ## Setup
 
@@ -20,10 +11,7 @@ mise install
 uv sync
 ```
 
-2. [Describe the external dependency, e.g. a local app/API, with config
-   env vars.]
-
-3. **Install the MCP server** into your pi agent:
+2. **Install the MCP server** into your pi agent:
 
 ```sh
 pi mcp add -l reference -- uv run --directory "$(pwd)" reference-agent
@@ -44,7 +32,7 @@ Alternatively, add it manually to `.pi/mcp.json` (project) or
   "mcpServers": {
     "reference": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/reference-agent", "reference-agent"]
+      "args": ["run", "--directory", "/path/to/papers-agent", "reference-agent"]
     }
   }
 }
@@ -56,24 +44,24 @@ You can also run the server directly from this repository to test it:
 uv run reference-agent
 ```
 
+No external accounts or API keys are required: the arXiv API and the
+alphaXiv embedding API are public, though both are rate-limited.
+
 ## Available tools
 
 | Tool | Description |
 |---|---|
 | `keyword_search` | Keyword search against a paper source (arXiv). |
+| `semantic_search` | Semantic search by natural-language description (arXiv via alphaXiv embeddings). |
 | `get_papers_in_date_range` | List papers from a source published within a date range. |
-| `get_paper_by_url` | Fetch a single paper by its url. |
-| `get_paper_by_doi` | Fetch a single paper by its doi. |
+| `get_paper_by_url` | Fetch a single paper by its url; the source is inferred from the url. |
+| `get_paper_by_doi` | Fetch a single paper by its doi; the source is inferred from the doi. |
 | `get_paper_authors` | Fetch the authors of a paper by doi. |
 | `get_paper_abstract` | Fetch the abstract of a paper by doi. |
+| `download_paper_pdf` | Download the pdf of a paper (by doi) to a given file path. |
+| `get_paper_pdf_text` | Return the full text extracted from the pdf of a paper (by doi). |
+| `get_paper_pdf_images` | Extract the images of a paper's pdf (by doi) into a directory and return their file paths. |
 
-## Install the skills into your pi agent
-
-Point pi at the checkout's `skills/` directory via your agent settings
-(`~/.pi/agent/settings.json`):
-
-```json
-{
-  "skills": ["/path/to/reference-agent/skills"]
-}
-```
+Anticipated failures (unknown source, unresolvable identifier, failed
+upstream request, missing paper, invalid date range) are surfaced as tool
+errors with a readable message so agents can recover.

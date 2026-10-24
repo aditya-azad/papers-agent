@@ -36,7 +36,9 @@ mcp = MCPServer(
     "reference-agent",
     instructions=(
         "Search scholarly paper sources (arXiv) and fetch paper "
-        "metadata. Use keyword_search for keyword-based queries, "
+        "metadata. Use keyword_search for keyword-based queries and "
+        "semantic_search for natural-language descriptions of the topic "
+        "(arXiv semantic search is powered by alphaXiv embeddings), "
         "get_papers_in_date_range for date-bounded listings, "
         "get_paper_by_url/get_paper_by_doi for exact lookups (the "
         "source is inferred from the url/doi), "
@@ -88,6 +90,16 @@ async def keyword_search(
 ) -> list[Paper]:
     """Search a paper source by keyword."""
     return await _run(_source(source), lambda s: s.search(keyword, limit))
+
+
+@mcp.tool()
+async def semantic_search(
+    source: PaperSourceName,
+    query: NonEmptyStr,
+    limit: Limit,
+) -> list[Paper]:
+    """Search a paper source by a natural-language semantic description."""
+    return await _run(_source(source), lambda s: s.semantic_search(query, limit))
 
 
 @mcp.tool()

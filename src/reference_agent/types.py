@@ -13,6 +13,8 @@ from pydantic import (
     StringConstraints,
 )
 
+from reference_agent.errors import PaperSourceError
+
 
 def _ensure_utc(value: datetime | str) -> datetime:
     if isinstance(value, str):
@@ -137,6 +139,14 @@ class PaperSource(ABC):
     async def search(
         self, keyword: NonEmptyStr, limit: int
     ) -> list[Paper]: ...
+
+    async def semantic_search(
+        self, query: NonEmptyStr, limit: int
+    ) -> list[Paper]:
+        """Search papers by a natural-language semantic description."""
+        raise PaperSourceError(
+            f"{type(self).__name__} does not support semantic search"
+        )
 
     @abstractmethod
     async def get_papers_in_date_range(
