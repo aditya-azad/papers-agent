@@ -11,28 +11,26 @@ mise install
 uv sync
 ```
 
-2. **Install the MCP server** into your pi agent:
+2. **Install the MCP server** into your pi agent globally:
 
 ```sh
-pi mcp add -l papers -- uv run --directory "$(pwd)" papers-agent
+pi mcp add papers -- uv run --directory "$(pwd)" papers-agent
 ```
 
-This adds a project-level (`-l`) stdio server entry that runs the server
-via uv, so no separate manual launch is needed. Verify the connection with:
+Verify the connection with:
 
 ```sh
 pi mcp list
 ```
 
-Alternatively, add it manually to `.pi/mcp.json` (project) or
-`~/.pi/agent/mcp.json` (user):
+Alternatively, add it manually to `~/.pi/agent/mcp.json` (global) or `.pi/mcp.json` (project-only):
 
 ```json
 {
   "mcpServers": {
     "papers": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/papers-agent", "papers"]
+      "args": ["run", "--directory", "/path/to/papers-agent", "papers-agent"]
     }
   }
 }
