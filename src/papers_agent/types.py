@@ -11,8 +11,10 @@ from pydantic import (
     Field,
     HttpUrl,
     StringConstraints,
+    model_validator,
 )
 
+from papers_agent.citation_key import citation_key as _compute_citation_key
 from papers_agent.errors import PaperSourceError
 
 
@@ -120,6 +122,21 @@ class Paper(BaseModel):
     publisher: PaperPublisher
     abstract: PaperAbstract
     published_at: UTCDatetime | None
+    citation_key: str = Field(
+        default="",
+        description=(
+            "authorShortTitleYear citation key; computed from the paper's own"
+            " fields when not explicitly provided"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _compute_citation_key(self) -> Paper:
+        if not self.citation_key:
+            self.citation_key = _compute_citation_key(
+                self.name, self.authors, self.published_at
+            )
+        return self
 
 
 class PaperSource(ABC):
@@ -155,6 +172,14 @@ class PaperSource(ABC):
     @abstractmethod
     async def get_paper_by_doi(self, doi: Doi) -> Paper: ...
 
+    async def citation_key(self, doi: Doi) -> str:
+        """Return the citation key of the paper with the given doi."""
+        return (await self.get_paper_by_doi(doi)).citation_key
+
+    async def citation_key_for_url(self, url: Url) -> str:
+        """Return the citation key of the paper with the given url."""
+        return (await self.get_paper_by_url(url)).citation_key
+
     async def get_authors(self, doi: Doi) -> PaperAuthors:
         return (await self.get_paper_by_doi(doi)).authors
 
@@ -168,13 +193,13 @@ class PaperSource(ABC):
         )
 
     @abstractmethod
-    async def download_pdf(self, doi: Doi, path: LocalPath) -> Path:
-        """Download the pdf of the paper with the given doi to the given path."""
+    async def download_pdf(self, doi: Doi, directory: LocalPath) -> Path:
+        """Download the pdf of the given paper into the given directory, named after the paper's citation key."""
 
     @abstractmethod
     async def get_pdf_text(self, doi: Doi) -> str:
         """Return the full text extracted from the pdf of the given paper."""
 
     @abstractmethod
-    async def get_pdf_images(self, doi: Doi, path: LocalPath) -> list[Path]:
-        """Extract the images of the given paper's pdf into the given directory."""
+    async def get_pdf_images(self, doi: Doi, directory: LocalPath) -> list[Path]:
+        """Extract the images of the given paper's pdf into the given directory, named after the paper's citation key."""

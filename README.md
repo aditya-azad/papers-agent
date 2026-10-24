@@ -77,9 +77,6 @@ docker build -t papers-agent .
 docker run -p 127.0.0.1:8000:8000 papers-agent
 ```
 
-Tools that take a `path` argument (pdf download / image extraction) should
-write under `/data`, which is a volume in the compose setup.
-
 No external accounts or API keys are required: the arXiv API and the
 alphaXiv embedding API are public, though both are rate-limited.
 
@@ -96,10 +93,8 @@ alphaXiv embedding API are public, though both are rate-limited.
 | `get_paper_authors` | Fetch the authors of a paper by doi. |
 | `get_paper_abstract` | Fetch the abstract of a paper by doi. |
 | `get_paper_references` | Fetch the bibliography of a paper (by doi) as raw reference strings. |
-| `download_paper_pdf` | Download the pdf of a paper (by doi) to a given file path. |
+| `get_paper_citation_key` | Return the citation key of a paper by url or doi (exactly one). |
+| `download_paper_pdf` | Download the pdf of a paper (by doi) into a given directory, named `<citation key>.pdf`. |
 | `get_paper_pdf_text` | Return the full text extracted from the pdf of a paper (by doi). |
-| `get_paper_pdf_images` | Extract the images of a paper's pdf (by doi) into a directory and return their file paths. |
+| `get_paper_pdf_images` | Extract the images of a paper's pdf (by doi) into a directory and return their file paths, named `<citation key>_image_<number>.png`. |
 
-Anticipated failures (unknown source, unresolvable identifier, failed
-upstream request, missing paper, invalid date range) are surfaced as tool
-errors with a readable message so agents can recover.

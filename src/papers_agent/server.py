@@ -1,13 +1,3 @@
-"""Papers MCP server exposing scholarly paper source operations as tools.
-
-Each tool dispatches to a registered paper source (e.g. arXiv). Lookup
-tools that identify a single paper (by url or doi) infer the source from
-the identifier itself; query tools take the source name explicitly. Tool
-failures that are anticipated (unknown source, unresolvable identifier,
-failed upstream request, missing paper, invalid date range) are surfaced
-as tool errors so agents can read the message and recover.
-"""
-
 import argparse
 import os
 from collections.abc import Awaitable, Callable
@@ -37,17 +27,12 @@ Limit = Annotated[int, Field(ge=1, le=100)]
 mcp = MCPServer(
     "papers",
     instructions=(
-        "Search scholarly paper sources (arXiv) and fetch paper "
-        "metadata. Use keyword_search for keyword-based queries and "
-        "semantic_search for natural-language descriptions of the topic "
-        "(arXiv semantic search is powered by alphaXiv embeddings), "
-        "get_papers_in_date_range for date-bounded listings, "
-        "get_paper_by_url/get_paper_by_doi for exact lookups (the "
-        "source is inferred from the url/doi), "
-        "get_paper_authors/get_paper_abstract/get_paper_references for "
-        "per-field details, "
-        "and download_paper_pdf/get_paper_pdf_text/get_paper_pdf_images "
-        "for pdf retrieval by doi."
+        "Search and fetch scholarly paper metadata and pdfs from "
+        "registered paper sources (currently arXiv). Prefer "
+        "semantic_search for natural-language topic descriptions "
+        "(arXiv uses alphaXiv embeddings); use keyword_search for "
+        "keyword queries. Tools taking a url or doi infer the source "
+        "from the identifier."
     ),
 )
 
@@ -161,12 +146,29 @@ async def get_paper_references(
 
 
 @mcp.tool()
+async def get_paper_citation_key(
+    url: Url | None = None,
+    doi: Doi | None = None,
+) -> str:
+    """Return the citation key (authorShortTitleYear) of the paper with the given url or doi; provide exactly one."""
+    if url is not None and doi is not None:
+        raise ToolError("provide either url or doi, not both")
+    if url is not None:
+        return await _run(_source_for_url(url), lambda s: s.citation_key_for_url(url))
+    if doi is not None:
+        return await _run(_source_for_doi(doi), lambda s: s.citation_key(doi))
+    raise ToolError("provide exactly one of url or doi")
+
+
+@mcp.tool()
 async def download_paper_pdf(
     doi: Doi,
-    path: LocalPath,
+    directory: LocalPath,
 ) -> str:
-    """Download the pdf of the paper with the given doi to the given file path."""
-    return str(await _run(_source_for_doi(doi), lambda s: s.download_pdf(doi, path)))
+    """Download the pdf of the paper with the given doi into the given directory, named after the paper's citation key."""
+    return str(
+        await _run(_source_for_doi(doi), lambda s: s.download_pdf(doi, directory))
+    )
 
 
 @mcp.tool()
@@ -186,10 +188,10 @@ def get_sources() -> list[str]:
 @mcp.tool()
 async def get_paper_pdf_images(
     doi: Doi,
-    path: LocalPath,
+    directory: LocalPath,
 ) -> list[str]:
-    """Extract the images of the given paper's pdf into the given directory and return their file paths."""
-    paths = await _run(_source_for_doi(doi), lambda s: s.get_pdf_images(doi, path))
+    """Extract the images of the given paper's pdf into the given directory and return their file paths; each image is named <citation key>_image_<number>."""
+    paths = await _run(_source_for_doi(doi), lambda s: s.get_pdf_images(doi, directory))
     return [str(image_path) for image_path in paths]
 
 

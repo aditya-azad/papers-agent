@@ -14,6 +14,10 @@ from defusedxml import ElementTree as DefusedElementTree
 from pydantic import ValidationError
 from pymupdf.mupdf import FzErrorBase
 
+from papers_agent.citation_key import (
+    unique_image_base,
+    unique_pdf_path,
+)
 from papers_agent.errors import (
     PaperNotFoundError,
     PaperSourceError,
@@ -182,7 +186,7 @@ def _extract_pdf_text(path: Path) -> str:
         raise PaperSourceError("failed to extract text from pdf") from exc
 
 
-def _extract_pdf_images(path: Path, images_dir: Path, prefix: str) -> list[Path]:
+def _extract_pdf_images(path: Path, images_dir: Path, base: str) -> list[Path]:
     images_dir.mkdir(parents=True, exist_ok=True)
     saved: list[Path] = []
     try:
@@ -204,10 +208,7 @@ def _extract_pdf_images(path: Path, images_dir: Path, prefix: str) -> list[Path]
                 try:
                     if pixmap.n - pixmap.alpha > 3:
                         pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
-                    file = (
-                        images_dir
-                        / f"{prefix}_p{page_number:03d}_i{image_index:02d}.png"
-                    )
+                    file = images_dir / f"{base}_image_{len(saved) + 1}.png"
                     pixmap.save(str(file))
                     saved.append(file)
                 finally:
@@ -339,9 +340,10 @@ class ArxivSource(PaperSource):
     async def get_paper_by_doi(self, doi: Doi) -> Paper:
         return await self._get_by_id(_arxiv_id_for_doi(doi))
 
-    async def download_pdf(self, doi: Doi, path: LocalPath) -> Path:
-        arxiv_id = _arxiv_id_for_doi(doi)
-        return await self._download_pdf_by_id(arxiv_id, Path(path))
+    async def download_pdf(self, doi: Doi, directory: LocalPath) -> Path:
+        paper = await self.get_paper_by_doi(doi)
+        path = unique_pdf_path(Path(directory), paper.citation_key)
+        return await self._download_pdf_by_id(_arxiv_id_for_doi(doi), path)
 
     async def get_pdf_text(self, doi: Doi) -> str:
         arxiv_id = _arxiv_id_for_doi(doi)
@@ -377,14 +379,14 @@ class ArxivSource(PaperSource):
             )
         return references
 
-    async def get_pdf_images(self, doi: Doi, path: LocalPath) -> list[Path]:
-        arxiv_id = _arxiv_id_for_doi(doi)
-        images_dir = Path(path)
-        prefix = arxiv_id.replace("/", "-")
+    async def get_pdf_images(self, doi: Doi, directory: LocalPath) -> list[Path]:
+        paper = await self.get_paper_by_doi(doi)
+        images_dir = Path(directory)
+        base = unique_image_base(images_dir, paper.citation_key)
         with self._temp_pdf() as tmp_path:
-            await self._download_pdf_by_id(arxiv_id, tmp_path)
+            await self._download_pdf_by_id(_arxiv_id_for_doi(doi), tmp_path)
             return await asyncio.to_thread(
-                _extract_pdf_images, tmp_path, images_dir, prefix
+                _extract_pdf_images, tmp_path, images_dir, base
             )
 
     @staticmethod
