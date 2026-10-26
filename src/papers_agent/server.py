@@ -7,6 +7,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
+from papers_agent.cached import CachedSource
 from papers_agent.errors import PaperSourceError
 from papers_agent.sources.arxiv import ArxivSource
 from papers_agent.types import (
@@ -36,7 +37,9 @@ mcp = MCPServer(
     ),
 )
 
-_sources: dict[PaperSourceName, PaperSource] = {"arxiv": ArxivSource()}
+_sources: dict[PaperSourceName, PaperSource] = {
+    "arxiv": CachedSource(ArxivSource())
+}
 
 
 def _source(name: PaperSourceName) -> PaperSource:

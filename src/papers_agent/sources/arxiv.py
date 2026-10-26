@@ -2,17 +2,14 @@ import asyncio
 import os
 import re
 import secrets
-import tempfile
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
 import httpx
-import pymupdf
 from defusedxml import ElementTree as DefusedElementTree
 from pydantic import ValidationError
-from pymupdf.mupdf import FzErrorBase
 
 from papers_agent.citation_key import (
     unique_image_base,
@@ -22,6 +19,7 @@ from papers_agent.errors import (
     PaperNotFoundError,
     PaperSourceError,
 )
+from papers_agent.pdf import TempPdf, extract_pdf_images, extract_pdf_text
 from papers_agent.types import (
     Doi,
     LocalPath,
@@ -97,21 +95,6 @@ def _arxiv_id_for_doi(doi: Doi) -> str:
     return arxiv_id
 
 
-class _TempPdf:
-    """Temporary file for a downloaded pdf, removed when the context exits."""
-
-    def __init__(self) -> None:
-        fd, name = tempfile.mkstemp(suffix=".pdf", prefix="papers-agent-")
-        os.close(fd)
-        self.path = Path(name)
-
-    def __enter__(self) -> Path:
-        return self.path
-
-    def __exit__(self, *exc_info: object) -> None:
-        self.path.unlink(missing_ok=True)
-
-
 class _BibliographyExtractor(HTMLParser):
     """Collect the text of the bibliography items of an arxiv html page."""
 
@@ -176,44 +159,6 @@ def _extract_references(html: str) -> list[str]:
     extractor.feed(html)
     extractor._finish_item()
     return extractor.references
-
-
-def _extract_pdf_text(path: Path) -> str:
-    try:
-        with pymupdf.open(path) as doc:
-            return "\n".join(page.get_text() for page in doc).strip()
-    except Exception as exc:
-        raise PaperSourceError("failed to extract text from pdf") from exc
-
-
-def _extract_pdf_images(path: Path, images_dir: Path, base: str) -> list[Path]:
-    images_dir.mkdir(parents=True, exist_ok=True)
-    saved: list[Path] = []
-    try:
-        doc = pymupdf.open(path)
-    except FzErrorBase as exc:
-        raise PaperSourceError("failed to open pdf") from exc
-    with doc:
-        for page_number, page in enumerate(doc, start=1):
-            seen_xrefs: set[int] = set()
-            for image_index, image in enumerate(page.get_images(full=True)):
-                xref = image[0]
-                if xref in seen_xrefs:
-                    continue
-                seen_xrefs.add(xref)
-                try:
-                    pixmap = pymupdf.Pixmap(doc, xref)
-                except FzErrorBase:
-                    continue
-                try:
-                    if pixmap.n - pixmap.alpha > 3:
-                        pixmap = pymupdf.Pixmap(pymupdf.csRGB, pixmap)
-                    file = images_dir / f"{base}_image_{len(saved) + 1}.png"
-                    pixmap.save(str(file))
-                    saved.append(file)
-                finally:
-                    pixmap = None
-    return saved
 
 
 class ArxivSource(PaperSource):
@@ -347,9 +292,9 @@ class ArxivSource(PaperSource):
 
     async def get_pdf_text(self, doi: Doi) -> str:
         arxiv_id = _arxiv_id_for_doi(doi)
-        with self._temp_pdf() as tmp_path:
+        with TempPdf() as tmp_path:
             await self._download_pdf_by_id(arxiv_id, tmp_path)
-            return await asyncio.to_thread(_extract_pdf_text, tmp_path)
+            return await asyncio.to_thread(extract_pdf_text, tmp_path)
 
     async def get_references(self, doi: Doi) -> list[str]:
         """Return the bibliography entries of the given paper as raw strings.
@@ -383,15 +328,11 @@ class ArxivSource(PaperSource):
         paper = await self.get_paper_by_doi(doi)
         images_dir = Path(directory)
         base = unique_image_base(images_dir, paper.citation_key)
-        with self._temp_pdf() as tmp_path:
+        with TempPdf() as tmp_path:
             await self._download_pdf_by_id(_arxiv_id_for_doi(doi), tmp_path)
             return await asyncio.to_thread(
-                _extract_pdf_images, tmp_path, images_dir, base
+                extract_pdf_images, tmp_path, images_dir, base
             )
-
-    @staticmethod
-    def _temp_pdf() -> _TempPdf:
-        return _TempPdf()
 
     async def _download_pdf_by_id(self, arxiv_id: str, path: Path) -> Path:
         url = _PDF_URL_TEMPLATE.format(arxiv_id=arxiv_id)
