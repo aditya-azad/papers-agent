@@ -5,6 +5,10 @@ restarts, so repeated queries and repeated requests for a specific
 paper are served locally instead of hitting the network again. Every
 cache lookup degrades gracefully: on any sqlite/filesystem error the
 cache simply reports a miss and the caller falls back to the source.
+
+Cache reads refresh the entry's ``cached_at`` timestamp, and entries
+untouched for longer than ``_CACHE_TTL`` are evicted on the next tool
+run (see ``evict_stale``), so the cache never grows without bound.
 """
 
 import asyncio
@@ -14,7 +18,7 @@ import os
 import sqlite3
 import threading
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TypeVar
 
@@ -23,6 +27,9 @@ from pydantic import ValidationError
 from papers_agent.types import Paper
 
 _DEFAULT_DB_PATH = Path.home() / ".papers-agent-cache" / "cache.sqlite3"
+
+_CACHE_TTL = timedelta(days=3)
+"""Cached items untouched for longer than this are evicted on the next tool run."""
 
 _SCHEMA_VERSION = 2
 
@@ -129,24 +136,56 @@ class SourceCache:
         except ValidationError:
             return None
 
+    @staticmethod
+    def _touch(
+        connection: sqlite3.Connection, table: str, where: str, params: tuple
+    ) -> None:
+        """Refresh an entry's cached_at timestamp so it counts as just touched."""
+        connection.execute(
+            f"UPDATE {table} SET cached_at = ? WHERE {where}", (_now(), *params)
+        )
+
+    async def evict_stale(self) -> None:
+        """Delete every cached item whose last touch is older than the TTL."""
+
+        def operation(connection: sqlite3.Connection) -> None:
+            cutoff = (datetime.now(UTC) - _CACHE_TTL).isoformat()
+            for table in ("papers", "query_results", "text_results", "pdf_results"):
+                connection.execute(
+                    f"DELETE FROM {table} WHERE cached_at < ?", (cutoff,)
+                )
+            connection.commit()
+
+        await self._run(operation)
+
     async def get_paper_by_url(self, source: str, url: str) -> Paper | None:
         def operation(connection: sqlite3.Connection) -> Paper | None:
             row = connection.execute(
                 "SELECT data FROM papers WHERE source = ? AND cache_key = ?",
                 (source, url),
             ).fetchone()
-            return self._paper_from_row(row) if row is not None else None
+            if row is None:
+                return None
+            self._touch(connection, "papers", "source = ? AND cache_key = ?", (source, url))
+            connection.commit()
+            return self._paper_from_row(row)
 
         return await self._run(operation)
 
     async def get_paper_by_doi(self, source: str, doi: str) -> Paper | None:
         def operation(connection: sqlite3.Connection) -> Paper | None:
             row = connection.execute(
-                "SELECT data FROM papers WHERE source = ? AND doi = ?"
+                "SELECT cache_key, data FROM papers WHERE source = ? AND doi = ?"
                 " ORDER BY cached_at DESC LIMIT 1",
                 (source, doi),
             ).fetchone()
-            return self._paper_from_row(row) if row is not None else None
+            if row is None:
+                return None
+            self._touch(
+                connection, "papers", "source = ? AND cache_key = ?", (source, row[0])
+            )
+            connection.commit()
+            return self._paper_from_row((row[1],))
 
         return await self._run(operation)
 
@@ -175,7 +214,12 @@ class SourceCache:
                     continue
                 paper = self._paper_from_row(row)
                 if paper is not None:
+                    self._touch(
+                        connection, "papers", "source = ? AND cache_key = ?", (source, url)
+                    )
                     papers[url] = paper
+            if papers:
+                connection.commit()
             return papers
 
         return await self._run(operation) or {}
@@ -188,6 +232,10 @@ class SourceCache:
             ).fetchone()
             if row is None:
                 return None
+            self._touch(
+                connection, "query_results", "cache_key = ?", (cache_key,)
+            )
+            connection.commit()
             try:
                 urls = json.loads(row[0])
             except ValueError:
@@ -216,7 +264,16 @@ class SourceCache:
                 " AND doi = ?",
                 (source, kind, doi),
             ).fetchone()
-            return row[0] if row is not None else None
+            if row is None:
+                return None
+            self._touch(
+                connection,
+                "text_results",
+                "source = ? AND kind = ? AND doi = ?",
+                (source, kind, doi),
+            )
+            connection.commit()
+            return row[0]
 
         return await self._run(operation)
 
@@ -237,7 +294,13 @@ class SourceCache:
                 "SELECT content FROM pdf_results WHERE source = ? AND doi = ?",
                 (source, doi),
             ).fetchone()
-            return row[0] if row is not None else None
+            if row is None:
+                return None
+            self._touch(
+                connection, "pdf_results", "source = ? AND doi = ?", (source, doi)
+            )
+            connection.commit()
+            return row[0]
 
         return await self._run(operation)
 

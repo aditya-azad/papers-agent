@@ -1,12 +1,14 @@
 import argparse
 import os
 from collections.abc import Awaitable, Callable
-from typing import Annotated
+from typing import Annotated, Any
 
+from mcp.server.context import HandlerResult, ServerRequestContext
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import Field
 
+from papers_agent.cache import SourceCache
 from papers_agent.cached import CachedSource
 from papers_agent.errors import PaperSourceError
 from papers_agent.sources.arxiv import ArxivSource
@@ -25,6 +27,21 @@ from papers_agent.types import (
 
 Limit = Annotated[int, Field(ge=1, le=100)]
 
+_cache = SourceCache()
+
+
+async def _evict_stale_before_tool_call(
+    ctx: ServerRequestContext[Any, Any],
+    call_next: Callable[
+        [ServerRequestContext[Any, Any]], Awaitable[HandlerResult]
+    ],
+) -> HandlerResult:
+    """Evict cache entries untouched for 3+ days before every tool run."""
+    if ctx.method == "tools/call":
+        await _cache.evict_stale()
+    return await call_next(ctx)
+
+
 mcp = MCPServer(
     "papers",
     instructions=(
@@ -35,10 +52,11 @@ mcp = MCPServer(
         "keyword queries. Tools taking a url or doi infer the source "
         "from the identifier."
     ),
+    middleware=[_evict_stale_before_tool_call],
 )
 
 _sources: dict[PaperSourceName, PaperSource] = {
-    "arxiv": CachedSource(ArxivSource())
+    "arxiv": CachedSource(ArxivSource(), cache=_cache)
 }
 
 
