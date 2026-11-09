@@ -80,6 +80,22 @@ docker run -p 127.0.0.1:8000:8000 papers-agent
 No external accounts or API keys are required: the arXiv API and the
 alphaXiv embedding API are public, though both are rate-limited.
 
+## Skills
+
+Paper-summarization guidance (a fixed structured note format covering architecture, inputs, outputs, loss functions, training procedure, evaluation, contributions over prior work, limitations, and future work) lives in a companion skill for the [pi](https://github.com/badlogic/pi-mono) agent, shipped in this repository under `skills/`. The skill is intentionally not placed in the auto-discovered project skills directory (`.agents/skills/`): it is meant to be installed into your pi agent, not tied to this checkout.
+
+## Install the skill into your pi agent
+
+Point pi at the checkout's `skills/` directory via your agent settings (`~/.pi/agent/settings.json`):
+
+```json
+{
+  "skills": ["/path/to/papers-agent/skills"]
+}
+```
+
+The skill is available as `paper-summary` in new sessions.
+
 ## Available tools
 
 | Tool | Description |
