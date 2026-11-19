@@ -63,7 +63,6 @@ _OAI_ARXIV_NAMESPACE = "http://arxiv.org/OAI/arXiv/"
 _OAI_METADATA_PREFIX = "arXiv"
 _OAI_IDENTIFIER_PREFIX = "oai:arXiv.org:"
 
-# Short aliases so the xml tag f-strings below stay readable.
 _ATOM = _ATOM_NAMESPACE
 _ARXIV = _ARXIV_NAMESPACE
 _OAI = _OAI_PMH_NAMESPACE
@@ -85,7 +84,6 @@ def _random_email() -> str:
 
 
 def _retry_after_seconds(value: str | None) -> float | None:
-    """Retry-After as delta-seconds; http-dates fall back to the default backoff."""
     if not value:
         return None
     try:
@@ -95,8 +93,6 @@ def _retry_after_seconds(value: str | None) -> float | None:
 
 
 class _BibliographyExtractor(HTMLParser):
-    """Collect the text of the bibliography items of an arxiv html page."""
-
     _BIB_ITEM_CLASS = "ltx_bibitem"
     _BIB_TAG_CLASS = "ltx_tag_bibitem"
     _SEPARATING_TAGS = frozenset(
@@ -161,12 +157,9 @@ def _extract_references(html: str) -> list[str]:
 
 
 class ArxivSource(PaperSource):
-    """Live arxiv api and alphaxiv; no local state."""
-
     source = "arxiv"
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
-        """Keyword search via the live arxiv api."""
         return await self._search_api(keyword, limit)
 
     async def _search_api(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
@@ -182,13 +175,6 @@ class ArxivSource(PaperSource):
         return [self._paper_from_entry(entry) for entry in self._entries(data)]
 
     async def semantic_search_ids(self, query: NonEmptyStr, limit: int) -> list[str]:
-        """Semantic arxiv ids via the alphaxiv embedding discovery api.
-
-        alphaxiv ranks titles/abstracts by embedding similarity over its own
-        fixed server-side candidate pool. Hits carry arxiv ids but no
-        authors, so the ids are hydrated into full papers afterwards (the
-        chain does this through papers_by_ids, preserving ranking order).
-        """
         return (await self._alphaxiv_semantic_ids(query))[:limit]
 
     async def _alphaxiv_semantic_ids(self, query: str) -> list[str]:
@@ -236,10 +222,6 @@ class ArxivSource(PaperSource):
         return arxiv_ids
 
     async def papers_by_ids(self, arxiv_ids: list[str]) -> dict[str, Paper]:
-        """Hydrate arxiv ids into papers via one batched api request.
-
-        Ids not on arxiv (or no longer there) are absent from the result.
-        """
         data = await self._request(
             _BASE_URL,
             {
@@ -256,8 +238,6 @@ class ArxivSource(PaperSource):
     async def get_papers_in_date_range(
         self, start: UTCDatetime, end: UTCDatetime, limit: int
     ) -> list[Paper]:
-        """Papers first submitted in the range, newest first, via the live
-        arxiv api."""
         return await self._date_range_api(start, end, limit)
 
     async def _date_range_api(
@@ -283,7 +263,6 @@ class ArxivSource(PaperSource):
 
     @classmethod
     def doi_for_url(cls, url: Url) -> Doi:
-        """Derive the paper's doi from its arxiv abstract or pdf page url."""
         arxiv_id = _arxiv_id_from_url(url)
         if arxiv_id is None:
             raise PaperNotFoundError(f"no arxiv paper for url {url}")
@@ -315,12 +294,6 @@ class ArxivSource(PaperSource):
             return await asyncio.to_thread(extract_pdf_text, tmp_path)
 
     async def get_references(self, doi: Doi) -> list[str]:
-        """Return the bibliography entries of the given paper as raw strings.
-
-        Parses the html rendering arxiv generates for recent submissions.
-        Papers without an html version (older submissions or pdf-only
-        uploads) raise a PaperSourceError.
-        """
         arxiv_id = _base_arxiv_id(_arxiv_id_for_doi(doi))
         url = _HTML_URL_TEMPLATE.format(arxiv_id=arxiv_id)
         response = await self._get(

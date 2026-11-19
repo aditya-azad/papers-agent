@@ -1,4 +1,3 @@
-"""A chain of paper sources with all fallback policy in one place."""
 
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -22,16 +21,6 @@ from papers_agent.types import (
 
 
 class ChainedSource(PaperSource):
-    """Tries its sources in order; the first answer wins.
-
-    Fallback policy lives here: local sources first (cheap, offline),
-    live sources to fill gaps, deduplicated by url. A source returning
-    None means "cannot answer" and the chain falls through to the next
-    one; a source raising PaperSourceError for an unsupported capability
-    (e.g. semantic search without an embedding provider) is skipped for
-    that capability. Sources are prepared once before the first query.
-    """
-
     source = "arxiv"
 
     def __init__(self, sources: list[PaperSource]) -> None:
@@ -46,7 +35,6 @@ class ChainedSource(PaperSource):
             source.prepare()
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
-        """Keyword search, local first, live api to fill gaps."""
         self._prepare()
         results: list[Paper] = []
         seen: set[str] = set()
@@ -63,8 +51,6 @@ class ChainedSource(PaperSource):
         return results[:limit]
 
     async def semantic_search(self, query: NonEmptyStr, limit: int) -> list[Paper]:
-        """Semantic search from the first source providing ids, hydrated
-        through the chain."""
         self._prepare()
         ids: list[str] = []
         for source in self._sources:
@@ -80,7 +66,6 @@ class ChainedSource(PaperSource):
         return [paper for arxiv_id in ids if (paper := papers.get(arxiv_id))]
 
     async def papers_by_ids(self, arxiv_ids: list[str]) -> dict[str, Paper]:
-        """Hydrate ids through the chain, local first, live api for gaps."""
         self._prepare()
         papers: dict[str, Paper] = {}
         missing = list(arxiv_ids)
@@ -98,8 +83,6 @@ class ChainedSource(PaperSource):
     async def get_papers_in_date_range(
         self, start: UTCDatetime, end: UTCDatetime, limit: int
     ) -> list[Paper]:
-        """Date-range query, local first (its cutoff defines coverage),
-        live api otherwise."""
         self._prepare()
         for source in self._sources:
             papers = await source.get_papers_in_date_range(start, end, limit)
@@ -161,7 +144,6 @@ class ChainedSource(PaperSource):
         doi: Doi,
         call: Callable[[PaperSource], Awaitable[S]],
     ) -> S:
-        """Run a doi-based capability on the first source supporting it."""
         self._prepare()
         last_error: PaperSourceError | None = None
         for source in self._sources:
@@ -183,7 +165,6 @@ class ChainedSource(PaperSource):
 
     @classmethod
     def doi_for_url(cls, url: Url) -> Doi:
-        """Derive the paper's doi from its arxiv abstract or pdf page url."""
         arxiv_id = arxiv_id_from_url(url)
         if arxiv_id is None:
             raise PaperNotFoundError(f"no arxiv paper for url {url}")

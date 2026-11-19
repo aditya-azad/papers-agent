@@ -1,4 +1,3 @@
-"""Pdf text/image extraction helpers shared by all paper sources."""
 
 import os
 import tempfile
@@ -11,8 +10,6 @@ from papers_agent.errors import PaperSourceError
 
 
 class TempPdf:
-    """Temporary file for a downloaded pdf, removed when the context exits."""
-
     def __init__(self) -> None:
         fd, name = tempfile.mkstemp(suffix=".pdf", prefix="papers-agent-")
         os.close(fd)

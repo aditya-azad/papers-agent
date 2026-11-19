@@ -1,6 +1,6 @@
 class PaperSourceError(Exception):
-    """Raised when a paper source API call fails."""
+    pass
 
 
 class PaperNotFoundError(PaperSourceError):
-    """Raised when no paper matches the requested url or doi."""
+    pass

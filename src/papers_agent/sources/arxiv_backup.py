@@ -1,24 +1,3 @@
-"""Local arxiv metadata serving database, kept in sync with an upstream dump.
-
-The serving database (e.g. a copy of the Kaggle arxiv metadata dump) is a
-normal writable sqlite file holding the dump's papers plus derived indexes:
-a doi map, first-submission dates and a full-text search index. It is the
-living database — an upstream dump is only diff input; the file is never
-replaced.
-
-`ArxivBackupSource` serves lookups from it: keyword search via FTS5, exact
-lookups by id/doi, and date-range queries. Every method returns None (or an
-empty list/dict) when the database cannot answer a query — missing, syncing,
-stale, or an error — so a chain can fall back to the live arxiv api.
-
-The syncer runs as a detached subprocess. On first use the fingerprint of
-the upstream dump is compared against the one recorded in the database; on
-mismatch the dump is diffed against the database and only changed/new/
-vanished rows are patched, including their derived rows and full-text
-entries. The first run — or a database without recorded metadata — performs
-a one-time full index build. A flock guard makes concurrent syncs
-impossible, and `backup_status` reports progress.
-"""
 
 import asyncio
 import fcntl
@@ -32,6 +11,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from typing import IO
 
 from papers_agent.errors import PaperNotFoundError, PaperSourceError
 from papers_agent.sources.arxiv_paper import (
@@ -66,8 +46,9 @@ _PAPER_COLUMNS = (
     "id, submitter, authors, title, comments, journal_ref, doi, report_no, "
     "categories, license, abstract, authors_parsed, versions, update_date"
 )
-# The papers columns the syncer sets from the dump; id is the join key.
-_PAPER_SETTABLE_COLUMNS = _PAPER_COLUMNS.removeprefix("id, ")
+_PAPER_COLUMNS_SET_BY_SYNC_EXCLUDING_JOIN_KEY_ID = (
+    _PAPER_COLUMNS.removeprefix("id, ")
+)
 _CHUNK = 100
 _BATCH_ROWS = 10_000
 _PROGRESS_EVERY = 200_000
@@ -116,7 +97,6 @@ CREATE VIRTUAL TABLE paper_fts USING fts5 (
 
 
 def fingerprint(db_path: Path) -> str:
-    """Cheap change marker for the dump file: size plus mtime."""
     stat = db_path.stat()
     return f"{stat.st_size}:{stat.st_mtime_ns}"
 
@@ -124,11 +104,6 @@ def fingerprint(db_path: Path) -> str:
 def _published_at(
     versions_json: str | None, update_date: str | None
 ) -> datetime | None:
-    """The paper's first submission date as a UTC datetime.
-
-    Prefers the created stamp of the first version and falls back to the
-    bare update_date (interpreted as UTC); None when neither parses.
-    """
     try:
         versions = json.loads(versions_json) if versions_json else []
     except json.JSONDecodeError:
@@ -152,7 +127,6 @@ def _published_at(
 
 
 def published_date(versions_json: str | None, update_date: str | None) -> str | None:
-    """The paper's first submission date as an ISO YYYY-MM-DD string."""
     published = _published_at(versions_json, update_date)
     return published.date().isoformat() if published else None
 
@@ -167,10 +141,9 @@ def _authors_from_json(value: str | None) -> list[str]:
         if not isinstance(entry, (list, tuple)):
             continue
         parts = [str(part).strip() for part in entry if str(part or "").strip()]
-        # authors_parsed entries are [last, forenames, suffix]; the
-        # suffix must stay last, so only the first two are reordered.
         if len(parts) >= 2:
-            parts = [parts[1], parts[0], *parts[2:]]
+            last, forenames, *suffix = parts
+            parts = [forenames, last, *suffix]
         name = " ".join(parts)
         if name:
             authors.append(name)
@@ -186,7 +159,6 @@ def _fts_match_query(keyword: str) -> str:
 
 @contextmanager
 def _connect(path: Path) -> Iterator[sqlite3.Connection | None]:
-    """Open the serving database in autocommit mode; None on error."""
     try:
         conn = sqlite3.connect(f"file:{path}?mode=rwc", uri=True)
     except sqlite3.Error:
@@ -222,8 +194,6 @@ _PAPER_ROW_QUERY = (
 
 
 class ArxivBackupSource(PaperSource):
-    """Metadata lookups into the local arxiv serving database."""
-
     source = "arxiv"
 
     def __init__(self, db_path: Path | None = None) -> None:
@@ -239,7 +209,6 @@ class ArxivBackupSource(PaperSource):
         return self._syncer
 
     def prepare(self) -> None:
-        """Start the sync subprocess when the database is stale."""
         self._syncer.ensure_started()
 
     @classmethod
@@ -248,7 +217,6 @@ class ArxivBackupSource(PaperSource):
 
     @classmethod
     def doi_for_url(cls, url: Url) -> Doi:
-        """Derive the paper's doi from its arxiv abstract or pdf page url."""
         arxiv_id = arxiv_id_from_url(url)
         if arxiv_id is None:
             raise PaperNotFoundError(f"no arxiv paper for url {url}")
@@ -259,22 +227,14 @@ class ArxivBackupSource(PaperSource):
         return arxiv_id_from_doi(doi) is not None
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper] | None:
-        """Keyword search over the serving database's full-text index."""
         return await asyncio.to_thread(self._search_sync, keyword, limit)
 
     async def papers_by_ids(self, arxiv_ids: list[str]) -> dict[str, Paper]:
-        """Hydrate arxiv ids into papers from the serving database."""
         return await asyncio.to_thread(self._papers_by_ids_sync, arxiv_ids)
 
     async def get_papers_in_date_range(
         self, start: UTCDatetime, end: UTCDatetime, limit: int
     ) -> list[Paper] | None:
-        """Papers first submitted within [start, end], newest first.
-
-        None when the range reaches past the database's cutoff, so the
-        chain knows to fall back to the live api; an empty list means no
-        matches within the covered range.
-        """
         return await asyncio.to_thread(
             self._date_range_sync, start, end, limit
         )
@@ -387,15 +347,12 @@ class ArxivBackupSource(PaperSource):
 
 
 class Syncer:
-    """Keeps the serving database in sync with the upstream dump."""
-
     def __init__(self, db_path: Path) -> None:
         self._db_path = db_path
         self._lock_path = db_path.with_name(db_path.name + ".sync.lock")
         self._progress_path = db_path.with_name(db_path.name + ".sync-progress")
 
     def state(self) -> str:
-        """'missing', 'syncing', 'stale' or 'ready'."""
         if not self._db_path.exists():
             return "missing"
         if self._lock_is_held():
@@ -406,7 +363,6 @@ class Syncer:
             return "stale"
 
     def status(self) -> dict[str, str]:
-        """A summary for the backup_status tool."""
         result = {"state": self.state()}
         if result["state"] == "missing":
             return result
@@ -429,11 +385,6 @@ class Syncer:
         return result
 
     def ensure_started(self) -> None:
-        """Spawn the sync subprocess when the database is stale or missing.
-
-        Never blocks; the subprocess runs detached and takes the flock
-        itself, so repeated calls are safe.
-        """
         if self.state() in ("ready", "syncing"):
             return
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -459,8 +410,15 @@ class Syncer:
             return True
         return False
 
+    @staticmethod
+    def _sync_lock_unavailable(sync_lock: IO[str]) -> bool:
+        try:
+            fcntl.flock(sync_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        return False
+
     def _is_ready(self) -> bool:
-        """True when the recorded dump fingerprint matches the dump."""
         dump_path = _dump_path()
         if dump_path is None:
             return False
@@ -484,16 +442,13 @@ class Syncer:
         )
 
     def run_sync(self) -> None:
-        """The subprocess entry point: sync once, then exit."""
         try:
             os.nice(10)
         except OSError:
             pass
-        with self._lock_path.open("w") as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:
-                return  # another sync is already running
+        with self._lock_path.open("w") as sync_lock:
+            if self._sync_lock_unavailable(sync_lock):
+                return
             try:
                 if self._is_ready():
                     return
@@ -552,14 +507,12 @@ class Syncer:
             )
 
     def _report_progress(self, text: str) -> None:
-        """Best-effort progress note; a plain file, not the locked db."""
         try:
             self._progress_path.write_text(text)
         except OSError:
             pass
 
     def _full_build(self, conn: sqlite3.Connection) -> None:
-        """Rebuild every paper row and all derived indexes from the dump."""
         self._report_progress("full build: replacing papers")
         conn.execute("DROP TABLE IF EXISTS paper_fts")
         conn.execute(_FTS_SCHEMA)
@@ -576,7 +529,6 @@ class Syncer:
         )
 
     def _diff_and_patch(self, conn: sqlite3.Connection) -> None:
-        """Touch only rows that differ between the dump and the database."""
         conn.execute(
             "CREATE TEMP TABLE sync_ids AS"
             " SELECT d.id, CASE WHEN p.id IS NULL THEN 'new'"
@@ -590,10 +542,8 @@ class Syncer:
             " SELECT p.id FROM main.papers p WHERE NOT EXISTS"
             " (SELECT 1 FROM dump.papers d WHERE d.id = p.id)"
         )
-        # FTS external-content deletes need the old values, captured before
-        # the papers rows change.
         conn.execute(
-            "CREATE TEMP TABLE fts_gone AS"
+            "CREATE TEMP TABLE fts_delete_old_values AS"
             " SELECT p.rowid AS f_rowid, COALESCE(p.title, '') AS title,"
             " COALESCE(p.abstract, '') AS abstract"
             " FROM main.papers p WHERE p.id IN (SELECT id FROM temp.sync_ids)"
@@ -603,7 +553,7 @@ class Syncer:
             "INSERT INTO paper_fts(paper_fts, rowid, title, abstract)"
             " VALUES('delete', ?, ?, ?)",
             conn.execute(
-                "SELECT f_rowid, title, abstract FROM temp.fts_gone"
+                "SELECT f_rowid, title, abstract FROM temp.fts_delete_old_values"
             ).fetchall(),
         )
         conn.execute(
@@ -618,7 +568,7 @@ class Syncer:
             "DELETE FROM main.papers WHERE id IN (SELECT id FROM temp.gone_ids)"
         )
         conn.execute(
-            f"UPDATE main.papers SET ({_PAPER_SETTABLE_COLUMNS}) ="
+            f"UPDATE main.papers SET ({_PAPER_COLUMNS_SET_BY_SYNC_EXCLUDING_JOIN_KEY_ID}) ="
             " (SELECT d.submitter, d.authors, d.title, d.comments,"
             " d.journal_ref, d.doi, d.report_no, d.categories, d.license,"
             " d.abstract, d.authors_parsed, d.versions, d.update_date"
@@ -627,7 +577,7 @@ class Syncer:
         )
         conn.execute(
             f"INSERT INTO main.papers ({_PAPER_COLUMNS})"
-            f" SELECT d.id, {_PAPER_SETTABLE_COLUMNS} FROM dump.papers d"
+            f" SELECT d.id, {_PAPER_COLUMNS_SET_BY_SYNC_EXCLUDING_JOIN_KEY_ID} FROM dump.papers d"
             " JOIN temp.sync_ids s ON s.id = d.id WHERE s.kind = 'new'"
         )
         self._rebuild_derived_rows(
@@ -637,12 +587,11 @@ class Syncer:
         )
         conn.execute("DROP TABLE IF EXISTS temp.sync_ids")
         conn.execute("DROP TABLE IF EXISTS temp.gone_ids")
-        conn.execute("DROP TABLE IF EXISTS temp.fts_gone")
+        conn.execute("DROP TABLE IF EXISTS temp.fts_delete_old_values")
 
     def _rebuild_derived_rows(
         self, conn: sqlite3.Connection, select_sql: str
     ) -> None:
-        """Recompute doi/date/FTS rows for the papers the select yields."""
         rows = conn.execute(select_sql)
         pending_dates: list[tuple[str, str]] = []
         pending_dois: list[tuple[str, str]] = []
@@ -688,14 +637,12 @@ class Syncer:
 
 
 def _dump_path() -> Path | None:
-    """The upstream dump to diff against; None when unset or missing."""
     env = os.environ.get(_DUMP_DB_ENV)
     path = Path(env).expanduser() if env else _DEFAULT_DUMP_DB
     return path if path.exists() else None
 
 
 def main() -> None:
-    """Run one sync pass and exit (the detached sync subprocess)."""
     if len(sys.argv) >= 3 and sys.argv[1] == "--sync":
         Syncer(Path(sys.argv[2])).run_sync()
         return

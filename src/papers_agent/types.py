@@ -143,43 +143,33 @@ class PaperSource(ABC):
     source: ClassVar[PaperSourceName]
 
     def prepare(self) -> None:
-        """Called once before the first query; sources may start
-        background work (e.g. building a local index)."""
+        pass
 
     @classmethod
     @abstractmethod
     def handles_url(cls, url: Url) -> bool:
-        """Whether this source can resolve the given paper url."""
+        pass
 
     @classmethod
     @abstractmethod
     def handles_doi(cls, doi: Doi) -> bool:
-        """Whether this source can resolve the given doi."""
+        pass
 
     @classmethod
     @abstractmethod
     def doi_for_url(cls, url: Url) -> Doi:
-        """Derive the doi of the paper at the given url."""
+        pass
 
     @abstractmethod
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper] | None:
-        """Keyword search. Returns None when the source cannot answer the
-        query (e.g. a local index is unavailable or does not cover the
-        corpus); an empty list means no matches."""
+        pass
 
     async def semantic_search_ids(self, query: NonEmptyStr, limit: int) -> list[str]:
-        """The source's ids for a semantic query, in relevance order.
-
-        Raises PaperSourceError when the source does not support semantic
-        search. Ids are hydrated through papers_by_ids, so a source only
-        needs id discovery; a chain combines the two.
-        """
         raise PaperSourceError(
             f"{type(self).__name__} does not support semantic search"
         )
 
     async def semantic_search(self, query: NonEmptyStr, limit: int) -> list[Paper]:
-        """Search papers by a natural-language semantic description."""
         ids = (await self.semantic_search_ids(query))[:limit]
         if not ids:
             return []
@@ -187,12 +177,6 @@ class PaperSource(ABC):
         return [paper for arxiv_id in ids if (paper := papers.get(arxiv_id))]
 
     async def papers_by_ids(self, arxiv_ids: list[str]) -> dict[str, Paper]:
-        """Hydrate the given ids into papers, keyed by id.
-
-        Ids the source cannot resolve are absent from the result. Raises
-        PaperSourceError when the source does not support batch hydration
-        or the lookup fails.
-        """
         raise PaperSourceError(
             f"{type(self).__name__} does not support batch hydration"
         )
@@ -201,63 +185,50 @@ class PaperSource(ABC):
     async def get_papers_in_date_range(
         self, start: UTCDatetime, end: UTCDatetime, limit: int
     ) -> list[Paper] | None:
-        """Papers first submitted within [start, end], newest first.
-        Returns None when the source cannot answer the range (e.g. a
-        local index does not cover it fully); an empty list means no
-        matches."""
+        pass
 
     @abstractmethod
     async def get_paper_by_url(self, url: Url) -> Paper | None:
-        """The paper at the given url, or None when the source cannot
-        resolve it (e.g. a local index does not have it). Sources that
-        can definitively determine absence raise PaperNotFoundError."""
+        pass
 
     @abstractmethod
     async def get_paper_by_doi(self, doi: Doi) -> Paper | None:
-        """The paper with the given doi, or None when the source cannot
-        resolve it. Sources that can definitively determine absence raise
-        PaperNotFoundError."""
+        pass
 
     async def citation_key(self, doi: Doi) -> str:
-        """Return the citation key of the paper with the given doi."""
         paper = await self.get_paper_by_doi(doi)
         if paper is None:
             raise PaperNotFoundError(f"no paper for doi {doi}")
         return paper.citation_key
 
     async def citation_key_for_url(self, url: Url) -> str:
-        """Return the citation key of the paper with the given url."""
         paper = await self.get_paper_by_url(url)
         if paper is None:
             raise PaperNotFoundError(f"no paper for url {url}")
         return paper.citation_key
 
     async def get_references(self, doi: Doi) -> list[str]:
-        """Return the bibliography entries of the given paper as raw strings."""
         raise PaperSourceError(
             f"{type(self).__name__} does not support reference extraction"
         )
 
     async def get_references_by_url(self, url: Url) -> list[str]:
-        """Return the bibliography entries of the paper at the given url as raw strings."""
         return await self.get_references(self.doi_for_url(url))
 
     @abstractmethod
     async def download_pdf(self, doi: Doi, directory: LocalPath) -> Path:
-        """Download the pdf of the given paper into the given directory, named after the paper's citation key."""
+        pass
 
     @abstractmethod
     async def get_pdf_text(self, doi: Doi) -> str:
-        """Return the full text extracted from the pdf of the given paper."""
+        pass
 
     async def get_pdf_text_by_url(self, url: Url) -> str:
-        """Return the full text extracted from the pdf of the paper at the given url."""
         return await self.get_pdf_text(self.doi_for_url(url))
 
     @abstractmethod
     async def get_pdf_images(self, doi: Doi, directory: LocalPath) -> list[Path]:
-        """Extract the images of the given paper's pdf into the given directory, named after the paper's citation key."""
+        pass
 
     async def get_pdf_images_by_url(self, url: Url, directory: LocalPath) -> list[Path]:
-        """Extract the images of the pdf of the paper at the given url into the given directory, named after the paper's citation key."""
         return await self.get_pdf_images(self.doi_for_url(url), directory)

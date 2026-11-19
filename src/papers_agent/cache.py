@@ -1,15 +1,3 @@
-"""Persistent sqlite cache for successful paper source query results.
-
-The cache lives in the user's home directory and survives server
-restarts, so repeated queries and repeated requests for a specific
-paper are served locally instead of hitting the network again. Every
-cache lookup degrades gracefully: on any sqlite/filesystem error the
-cache simply reports a miss and the caller falls back to the source.
-
-Cache reads refresh the entry's ``cached_at`` timestamp, and entries
-untouched for longer than ``_CACHE_TTL`` are evicted on the next tool
-run (see ``evict_stale``), so the cache never grows without bound.
-"""
 
 import asyncio
 import hashlib
@@ -30,7 +18,6 @@ from papers_agent.types import Paper
 _DEFAULT_DB_PATH = Path.home() / ".papers-agent-cache" / "cache.sqlite3"
 
 _CACHE_TTL = timedelta(days=3)
-"""Cached items untouched for longer than this are evicted on the next tool run."""
 
 _SCHEMA_VERSION = 2
 
@@ -94,13 +81,6 @@ def _decode_urls(row: object) -> list[str] | None:
 
 @dataclass(frozen=True)
 class _Table:
-    """Declarative description of one cache table.
-
-    ``keys`` are the lookup columns, ``content`` holds the payload, and
-    ``extra`` names additional payload columns filled from ``extra_of``.
-    ``encode``/``decode`` convert between the payload and its stored form.
-    """
-
     name: str
     keys: tuple[str, ...]
     content: str
@@ -131,8 +111,6 @@ _TABLES: dict[str, _Table] = {
 
 
 class SourceCache:
-    """Sqlite-backed cache of papers and query results, keyed per source."""
-
     def __init__(self, path: Path | None = None) -> None:
         if path is None:
             env_path = os.environ.get("PAPERS_AGENT_CACHE_DB")
@@ -143,7 +121,6 @@ class SourceCache:
 
     @staticmethod
     def query_key(source: str, scope: str, params: dict[str, str]) -> str:
-        """Stable cache key for a query against a source."""
         canonical = json.dumps(
             [source, scope, sorted(params.items())], separators=(",", ":")
         )
@@ -198,13 +175,11 @@ class SourceCache:
         where: str,
         params: tuple,
     ) -> None:
-        """Refresh an entry's cached_at timestamp so it counts as just touched."""
         connection.execute(
             f"UPDATE {table} SET cached_at = ? WHERE {where}", (_now(), *params)
         )
 
     async def _get(self, table: str, key_values: tuple) -> T | None:
-        """Read one entry, refresh its timestamp, and decode its payload."""
         spec = _TABLES[table]
         select = f"SELECT {spec.content} FROM {spec.name} WHERE {self._where(spec)}"
 
@@ -234,8 +209,6 @@ class SourceCache:
         await self._run(operation)
 
     async def evict_stale(self) -> None:
-        """Delete every cached item whose last touch is older than the TTL."""
-
         def operation(connection: sqlite3.Connection) -> None:
             cutoff = (datetime.now(UTC) - _CACHE_TTL).isoformat()
             for table in _TABLES:

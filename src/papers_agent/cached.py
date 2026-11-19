@@ -1,4 +1,3 @@
-"""Generic caching wrapper around any PaperSource implementation."""
 
 import asyncio
 import tempfile
@@ -24,15 +23,6 @@ T = TypeVar("T")
 
 
 class CachedSource(PaperSource):
-    """Transparent cache in front of another PaperSource.
-
-    Successful results of every public operation are stored in a shared
-    sqlite cache keyed by the source name, so repeated queries and
-    repeated requests for a specific paper are answered without hitting
-    the underlying source again. Failed lookups are never cached. All
-    cache access degrades gracefully to the wrapped source.
-    """
-
     def __init__(self, inner: PaperSource, cache: SourceCache | None = None) -> None:
         self._inner = inner
         self._cache = cache if cache is not None else SourceCache()

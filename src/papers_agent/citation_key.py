@@ -74,7 +74,6 @@ def _short_title(title: str) -> str:
 
 
 def citation_key(name: str, authors: list[str], published_at: datetime | None) -> str:
-    """Derive the authorShortTitleYear citation key of a paper from its fields."""
     auth = re.sub(r"[^A-Za-z0-9]", "", _first_author_last_name(authors)).lower()
     if not auth:
         auth = "anon"
@@ -97,7 +96,6 @@ def _disambiguation_suffixes() -> Iterator[str]:
 def _unique_base(
     directory: Path, base: str, taken: Callable[[str], bool]
 ) -> str:
-    """First non-taken disambiguation of ``base`` in ``directory``."""
     directory.mkdir(parents=True, exist_ok=True)
     for suffix in _disambiguation_suffixes():
         candidate = base + suffix

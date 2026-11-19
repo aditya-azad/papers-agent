@@ -1,4 +1,3 @@
-"""Arxiv domain helpers: id/url/doi parsing and Paper construction."""
 
 import re
 from datetime import datetime
@@ -24,13 +23,11 @@ _URL_PATTERN = re.compile(
 
 
 def arxiv_id_from_url(url: Url) -> str | None:
-    """The arxiv id in the given abstract or pdf page url, or None."""
     match = _URL_PATTERN.fullmatch(url)
     return match.group(1).lower() if match else None
 
 
 def arxiv_id_from_doi(doi: Doi) -> str | None:
-    """The arxiv id encoded in the given synthetic arxiv doi, or None."""
     normalized = doi.lower()
     if not normalized.startswith(ARXIV_DOI_PREFIX):
         return None
@@ -41,10 +38,6 @@ def arxiv_id_from_doi(doi: Doi) -> str | None:
 
 
 def arxiv_id_for_doi(doi: Doi) -> str:
-    """The arxiv id for the given synthetic arxiv doi.
-
-    Raises PaperNotFoundError when the doi is not an arxiv doi.
-    """
     arxiv_id = arxiv_id_from_doi(doi)
     if arxiv_id is None:
         raise PaperNotFoundError(f"no arxiv paper for doi {doi}")
@@ -52,7 +45,6 @@ def arxiv_id_for_doi(doi: Doi) -> str:
 
 
 def base_arxiv_id(arxiv_id: str) -> str:
-    """The arxiv id without its version suffix, lowercased."""
     return _VERSION_SUFFIX_PATTERN.sub("", arxiv_id.lower())
 
 
@@ -65,11 +57,6 @@ def paper_from_arxiv_fields(
     abstract: str,
     published_at: datetime | str | None,
 ) -> Paper:
-    """Build a Paper from raw arxiv metadata, deriving the synthetic doi.
-
-    Raises PaperSourceError if the fields fail validation (e.g. an empty
-    title or an over-long abstract).
-    """
     try:
         return Paper(
             source="arxiv",
