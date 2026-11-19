@@ -170,7 +170,7 @@ class PaperSource(ABC):
         )
 
     async def semantic_search(self, query: NonEmptyStr, limit: int) -> list[Paper]:
-        ids = (await self.semantic_search_ids(query))[:limit]
+        ids = (await self.semantic_search_ids(query, limit))[:limit]
         if not ids:
             return []
         papers = await self.papers_by_ids(ids)

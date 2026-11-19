@@ -19,24 +19,12 @@ from papers_agent.errors import (
 )
 from papers_agent.pdf import TempPdf, extract_pdf_images, extract_pdf_text
 from papers_agent.sources.arxiv_paper import (
-    ARXIV_DOI_PREFIX as _ARXIV_DOI_PREFIX,
-)
-from papers_agent.sources.arxiv_paper import (
-    ARXIV_ID_PATTERN as _ARXIV_ID_PATTERN,
-)
-from papers_agent.sources.arxiv_paper import (
-    arxiv_id_for_doi as _arxiv_id_for_doi,
-)
-from papers_agent.sources.arxiv_paper import (
-    arxiv_id_from_doi as _arxiv_id_from_doi,
-)
-from papers_agent.sources.arxiv_paper import (
-    arxiv_id_from_url as _arxiv_id_from_url,
-)
-from papers_agent.sources.arxiv_paper import (
-    base_arxiv_id as _base_arxiv_id,
-)
-from papers_agent.sources.arxiv_paper import (
+    ARXIV_DOI_PREFIX,
+    ARXIV_ID_PATTERN,
+    arxiv_id_for_doi,
+    arxiv_id_from_doi,
+    arxiv_id_from_url,
+    base_arxiv_id,
     paper_from_arxiv_fields,
 )
 from papers_agent.types import (
@@ -115,7 +103,7 @@ class _BibliographyExtractor(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         classes = self._classes(attrs)
         if tag == "li" and self._BIB_ITEM_CLASS in classes:
-            self._finish_item()
+            self.finish()
             self._in_item = True
         elif self._in_item:
             if self._BIB_TAG_CLASS in classes:
@@ -129,7 +117,7 @@ class _BibliographyExtractor(HTMLParser):
         if self._skip_depth and tag == "span":
             self._skip_depth -= 1
         elif tag == "li":
-            self._finish_item()
+            self.finish()
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if self._in_item and tag in self._SEPARATING_TAGS:
@@ -139,7 +127,7 @@ class _BibliographyExtractor(HTMLParser):
         if self._in_item and not self._skip_depth:
             self._parts.append(data)
 
-    def _finish_item(self) -> None:
+    def finish(self) -> None:
         if self._in_item:
             text = " ".join("".join(self._parts).split())
             if text:
@@ -148,12 +136,10 @@ class _BibliographyExtractor(HTMLParser):
         self._skip_depth = 0
         self._parts = []
 
-
-def _extract_references(html: str) -> list[str]:
-    extractor = _BibliographyExtractor()
-    extractor.feed(html)
-    extractor._finish_item()
-    return extractor.references
+    def extract(self, html: str) -> list[str]:
+        self.feed(html)
+        self.finish()
+        return self.references
 
 
 class ArxivSource(PaperSource):
@@ -181,28 +167,11 @@ class ArxivSource(PaperSource):
         base_url = os.environ.get("ALPHAXIV_API_URL") or _ALPHAXIV_API_URL
         headers = {"User-Agent": _ALPHAXIV_USER_AGENT}
         async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS) as client:
-            for attempt in range(1, _ALPHAXIV_MAX_ATTEMPTS + 1):
-                try:
-                    response = await client.get(
-                        f"{base_url}{_ALPHAXIV_DISCOVER_PATH}",
-                        params={"q": query, "prioritize": "default"},
-                        headers=headers,
-                    )
-                except httpx.HTTPError as exc:
-                    raise PaperSourceError("alphaxiv request failed") from exc
-                if response.status_code != _HTTP_TOO_MANY_REQUESTS:
-                    break
-                retry_after = _retry_after_seconds(response.headers.get("Retry-After"))
-                if attempt == _ALPHAXIV_MAX_ATTEMPTS or (
-                    retry_after is not None
-                    and retry_after > _ALPHAXIV_MAX_RETRY_WAIT_SECONDS
-                ):
-                    break
-                await asyncio.sleep(retry_after if retry_after is not None else attempt)
-        if response.status_code == _HTTP_TOO_MANY_REQUESTS:
-            raise PaperSourceError(
-                "alphaxiv is rate-limiting requests "
-                f"(status {_HTTP_TOO_MANY_REQUESTS}); retry later"
+            response = await self._alphaxiv_get(
+                client,
+                f"{base_url}{_ALPHAXIV_DISCOVER_PATH}",
+                {"q": query, "prioritize": "default"},
+                headers,
             )
         self._raise_for_status(response, "alphaxiv")
         try:
@@ -216,8 +185,8 @@ class ArxivSource(PaperSource):
             paper_id = hit.get("paperId") if isinstance(hit, dict) else None
             if not isinstance(paper_id, str) or not paper_id:
                 continue
-            arxiv_id = _base_arxiv_id(paper_id.lower())
-            if _ARXIV_ID_PATTERN.fullmatch(arxiv_id) and arxiv_id not in arxiv_ids:
+            arxiv_id = base_arxiv_id(paper_id.lower())
+            if ARXIV_ID_PATTERN.fullmatch(arxiv_id) and arxiv_id not in arxiv_ids:
                 arxiv_ids.append(arxiv_id)
         return arxiv_ids
 
@@ -259,42 +228,42 @@ class ArxivSource(PaperSource):
 
     @classmethod
     def handles_url(cls, url: Url) -> bool:
-        return _arxiv_id_from_url(url) is not None
+        return arxiv_id_from_url(url) is not None
 
     @classmethod
     def doi_for_url(cls, url: Url) -> Doi:
-        arxiv_id = _arxiv_id_from_url(url)
+        arxiv_id = arxiv_id_from_url(url)
         if arxiv_id is None:
             raise PaperNotFoundError(f"no arxiv paper for url {url}")
-        return f"{_ARXIV_DOI_PREFIX}{_base_arxiv_id(arxiv_id)}"
+        return f"{ARXIV_DOI_PREFIX}{base_arxiv_id(arxiv_id)}"
 
     @classmethod
     def handles_doi(cls, doi: Doi) -> bool:
-        return _arxiv_id_from_doi(doi) is not None
+        return arxiv_id_from_doi(doi) is not None
 
     async def get_paper_by_url(self, url: Url) -> Paper:
-        arxiv_id = _arxiv_id_from_url(url)
+        arxiv_id = arxiv_id_from_url(url)
         if arxiv_id is None:
             raise PaperNotFoundError(f"no arxiv paper for url {url}")
         return await self._get_by_id(arxiv_id)
 
     async def get_paper_by_doi(self, doi: Doi) -> Paper:
-        return await self._get_by_id(_arxiv_id_for_doi(doi))
+        return await self._get_by_id(arxiv_id_for_doi(doi))
 
     async def download_pdf(self, doi: Doi, directory: LocalPath) -> Path:
-        arxiv_id = _arxiv_id_for_doi(doi)
+        arxiv_id = arxiv_id_for_doi(doi)
         paper = await self._get_by_id(arxiv_id)
         path = unique_pdf_path(Path(directory), paper.citation_key)
         return await self._download_pdf_by_id(arxiv_id, path)
 
     async def get_pdf_text(self, doi: Doi) -> str:
-        arxiv_id = _arxiv_id_for_doi(doi)
+        arxiv_id = arxiv_id_for_doi(doi)
         with TempPdf() as tmp_path:
             await self._download_pdf_by_id(arxiv_id, tmp_path)
             return await asyncio.to_thread(extract_pdf_text, tmp_path)
 
     async def get_references(self, doi: Doi) -> list[str]:
-        arxiv_id = _base_arxiv_id(_arxiv_id_for_doi(doi))
+        arxiv_id = base_arxiv_id(arxiv_id_for_doi(doi))
         url = _HTML_URL_TEMPLATE.format(arxiv_id=arxiv_id)
         response = await self._get(
             url, follow_redirects=True, context="arxiv html request"
@@ -302,7 +271,7 @@ class ArxivSource(PaperSource):
         if response.status_code == 404:
             raise PaperSourceError(f"arxiv has no html version for paper {arxiv_id}")
         self._raise_for_status(response)
-        references = await asyncio.to_thread(_extract_references, response.text)
+        references = await asyncio.to_thread(_BibliographyExtractor().extract, response.text)
         if not references:
             raise PaperSourceError(
                 f"no bibliography found in the arxiv html version of {arxiv_id}"
@@ -310,7 +279,7 @@ class ArxivSource(PaperSource):
         return references
 
     async def get_pdf_images(self, doi: Doi, directory: LocalPath) -> list[Path]:
-        arxiv_id = _arxiv_id_for_doi(doi)
+        arxiv_id = arxiv_id_for_doi(doi)
         paper = await self._get_by_id(arxiv_id)
         images_dir = Path(directory)
         base = unique_image_base(images_dir, paper.citation_key)
@@ -353,7 +322,7 @@ class ArxivSource(PaperSource):
                 tmp_path.unlink(missing_ok=True)
 
     async def _get_by_id(self, arxiv_id: str) -> Paper:
-        base_id = _base_arxiv_id(arxiv_id)
+        base_id = base_arxiv_id(arxiv_id)
         data = await self._request(
             _OAI_BASE_URL,
             {
@@ -364,6 +333,30 @@ class ArxivSource(PaperSource):
         )
         metadata = self._oai_metadata(data, base_id)
         return self._paper_from_oai_metadata(metadata, base_id)
+
+    @staticmethod
+    async def _alphaxiv_get(
+        client: httpx.AsyncClient,
+        url: str,
+        params: dict[str, str],
+        headers: dict[str, str],
+    ) -> httpx.Response:
+        for attempt in range(1, _ALPHAXIV_MAX_ATTEMPTS + 1):
+            try:
+                response = await client.get(url, params=params, headers=headers)
+            except httpx.HTTPError as exc:
+                raise PaperSourceError("alphaxiv request failed") from exc
+            if response.status_code != _HTTP_TOO_MANY_REQUESTS:
+                return response
+            retry_after = _retry_after_seconds(response.headers.get("Retry-After"))
+            wait = retry_after if retry_after is not None else float(attempt)
+            if attempt == _ALPHAXIV_MAX_ATTEMPTS or wait > _ALPHAXIV_MAX_RETRY_WAIT_SECONDS:
+                break
+            await asyncio.sleep(wait)
+        raise PaperSourceError(
+            "alphaxiv is rate-limiting requests "
+            f"(status {_HTTP_TOO_MANY_REQUESTS}); retry later"
+        )
 
     async def _request(self, url: str, params: dict[str, str]) -> str:
         response = await self._get(url, params)
@@ -466,10 +459,10 @@ class ArxivSource(PaperSource):
 
     def _paper_from_entry(self, entry: ET.Element) -> Paper:
         entry_id = self._required_text(entry, f"{{{_ATOM}}}id")
-        arxiv_id = _arxiv_id_from_url(entry_id)
+        arxiv_id = arxiv_id_from_url(entry_id)
         if arxiv_id is None:
             raise PaperSourceError(f"unexpected arxiv entry id {entry_id}")
-        base_id = _base_arxiv_id(arxiv_id)
+        base_id = base_arxiv_id(arxiv_id)
         return paper_from_arxiv_fields(
             base_id=base_id,
             name=self._required_text(entry, f"{{{_ATOM}}}title"),

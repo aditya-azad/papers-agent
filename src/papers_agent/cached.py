@@ -155,7 +155,6 @@ class CachedSource(PaperSource):
             if len(papers) == len(paper_urls):
                 return [papers[url] for url in paper_urls]
         papers = await fetch()
-        for paper in papers:
-            await self._cache.put_paper(self.source, paper)
+        await self._cache.put_papers(self.source, papers)
         await self._cache.put_query_result(cache_key, [paper.url for paper in papers])
         return papers

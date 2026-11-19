@@ -50,20 +50,16 @@ class ChainedSource(PaperSource):
                 break
         return results[:limit]
 
-    async def semantic_search(self, query: NonEmptyStr, limit: int) -> list[Paper]:
+    async def semantic_search_ids(self, query: NonEmptyStr, limit: int) -> list[str]:
         self._prepare()
-        ids: list[str] = []
         for source in self._sources:
             try:
-                ids = (await source.semantic_search_ids(query))[:limit]
+                ids = (await source.semantic_search_ids(query, limit))[:limit]
             except PaperSourceError:
                 continue
             if ids:
-                break
-        if not ids:
-            return []
-        papers = await self.papers_by_ids(ids)
-        return [paper for arxiv_id in ids if (paper := papers.get(arxiv_id))]
+                return ids
+        return []
 
     async def papers_by_ids(self, arxiv_ids: list[str]) -> dict[str, Paper]:
         self._prepare()

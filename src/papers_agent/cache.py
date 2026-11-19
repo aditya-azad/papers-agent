@@ -90,24 +90,22 @@ class _Table:
     extra_of: Callable[[Any], tuple] = _no_extra
 
 
-_TABLES: dict[str, _Table] = {
-    "papers": _Table(
-        "papers", ("source", "cache_key"), "data",
-        lambda paper: paper.model_dump_json(), _decode_paper,
-        extra=("doi",), extra_of=lambda paper: (paper.doi,),
-    ),
-    "query_results": _Table(
-        "query_results", ("cache_key",), "paper_urls", json.dumps, _decode_urls,
-    ),
-    "text_results": _Table(
-        "text_results", ("source", "kind", "doi"), "content",
-        lambda text: text, lambda row: row[0],
-    ),
-    "pdf_results": _Table(
-        "pdf_results", ("source", "doi"), "content",
-        lambda blob: blob, lambda row: row[0],
-    ),
-}
+_PAPERS = _Table(
+    "papers", ("source", "cache_key"), "data",
+    lambda paper: paper.model_dump_json(), _decode_paper,
+    extra=("doi",), extra_of=lambda paper: (paper.doi,),
+)
+_QUERY_RESULTS = _Table(
+    "query_results", ("cache_key",), "paper_urls", json.dumps, _decode_urls,
+)
+_TEXT_RESULTS = _Table(
+    "text_results", ("source", "kind", "doi"), "content",
+    lambda text: text, lambda row: row[0],
+)
+_PDF_RESULTS = _Table(
+    "pdf_results", ("source", "doi"), "content",
+    lambda blob: blob, lambda row: row[0],
+)
 
 
 class SourceCache:
@@ -165,6 +163,15 @@ class SourceCache:
         return await asyncio.to_thread(task)
 
     @staticmethod
+    def _insert_sql(spec: _Table) -> str:
+        columns = (*spec.keys, *spec.extra, spec.content, "cached_at")
+        placeholders = ", ".join("?" for _ in columns)
+        return (
+            f"INSERT OR REPLACE INTO {spec.name} ({', '.join(columns)})"
+            f" VALUES ({placeholders})"
+        )
+
+    @staticmethod
     def _where(spec: _Table) -> str:
         return " AND ".join(f"{column} = ?" for column in spec.keys)
 
@@ -179,8 +186,7 @@ class SourceCache:
             f"UPDATE {table} SET cached_at = ? WHERE {where}", (_now(), *params)
         )
 
-    async def _get(self, table: str, key_values: tuple) -> T | None:
-        spec = _TABLES[table]
+    async def _get(self, spec: _Table, key_values: tuple) -> T | None:
         select = f"SELECT {spec.content} FROM {spec.name} WHERE {self._where(spec)}"
 
         def operation(connection: sqlite3.Connection) -> T | None:
@@ -193,15 +199,12 @@ class SourceCache:
 
         return await self._run(operation)
 
-    async def _put(self, table: str, key_values: tuple, value: Any) -> None:
-        spec = _TABLES[table]
-        columns = (*spec.keys, *spec.extra, spec.content, "cached_at")
-        placeholders = ", ".join("?" for _ in columns)
+    async def _put(self, spec: _Table, key_values: tuple, value: Any) -> None:
+        insert_sql = self._insert_sql(spec)
 
         def operation(connection: sqlite3.Connection) -> None:
             connection.execute(
-                f"INSERT OR REPLACE INTO {spec.name} ({', '.join(columns)})"
-                f" VALUES ({placeholders})",
+                insert_sql,
                 (*key_values, *spec.extra_of(value), spec.encode(value), _now()),
             )
             connection.commit()
@@ -211,16 +214,16 @@ class SourceCache:
     async def evict_stale(self) -> None:
         def operation(connection: sqlite3.Connection) -> None:
             cutoff = (datetime.now(UTC) - _CACHE_TTL).isoformat()
-            for table in _TABLES:
+            for spec in (_PAPERS, _QUERY_RESULTS, _TEXT_RESULTS, _PDF_RESULTS):
                 connection.execute(
-                    f"DELETE FROM {table} WHERE cached_at < ?", (cutoff,)
+                    f"DELETE FROM {spec.name} WHERE cached_at < ?", (cutoff,)
                 )
             connection.commit()
 
         await self._run(operation)
 
     async def get_paper_by_url(self, source: str, url: str) -> Paper | None:
-        return await self._get("papers", (source, url))
+        return await self._get(_PAPERS, (source, url))
 
     async def get_paper_by_doi(self, source: str, doi: str) -> Paper | None:
         def operation(connection: sqlite3.Connection) -> Paper | None:
@@ -232,7 +235,7 @@ class SourceCache:
             if row is None:
                 return None
             self._touch(
-                connection, "papers", self._where(_TABLES["papers"]), (source, row[0])
+                connection, _PAPERS.name, self._where(_PAPERS), (source, row[0])
             )
             connection.commit()
             return _decode_paper((row[1],))
@@ -240,12 +243,30 @@ class SourceCache:
         return await self._run(operation)
 
     async def put_paper(self, source: str, paper: Paper) -> None:
-        await self._put("papers", (source, paper.url), paper)
+        await self.put_papers(source, [paper])
+
+    async def put_papers(self, source: str, papers: list[Paper]) -> None:
+        if not papers:
+            return
+        insert_sql = self._insert_sql(_PAPERS)
+
+        def operation(connection: sqlite3.Connection) -> None:
+            cached_at = _now()
+            connection.executemany(
+                insert_sql,
+                [
+                    (source, paper.url, paper.doi, paper.model_dump_json(), cached_at)
+                    for paper in papers
+                ],
+            )
+            connection.commit()
+
+        await self._run(operation)
 
     async def get_papers_by_urls(
         self, source: str, urls: list[str]
     ) -> dict[str, Paper]:
-        spec = _TABLES["papers"]
+        spec = _PAPERS
         select = f"SELECT {spec.content} FROM {spec.name} WHERE {self._where(spec)}"
         where = self._where(spec)
 
@@ -266,19 +287,19 @@ class SourceCache:
         return await self._run(operation) or {}
 
     async def get_query_result(self, cache_key: str) -> list[str] | None:
-        return await self._get("query_results", (cache_key,))
+        return await self._get(_QUERY_RESULTS, (cache_key,))
 
     async def put_query_result(self, cache_key: str, paper_urls: list[str]) -> None:
-        await self._put("query_results", (cache_key,), paper_urls)
+        await self._put(_QUERY_RESULTS, (cache_key,), paper_urls)
 
     async def get_text(self, source: str, kind: str, doi: str) -> str | None:
-        return await self._get("text_results", (source, kind, doi))
+        return await self._get(_TEXT_RESULTS, (source, kind, doi))
 
     async def put_text(self, source: str, kind: str, doi: str, content: str) -> None:
-        await self._put("text_results", (source, kind, doi), content)
+        await self._put(_TEXT_RESULTS, (source, kind, doi), content)
 
     async def get_pdf(self, source: str, doi: str) -> bytes | None:
-        return await self._get("pdf_results", (source, doi))
+        return await self._get(_PDF_RESULTS, (source, doi))
 
     async def put_pdf(self, source: str, doi: str, content: bytes) -> None:
-        await self._put("pdf_results", (source, doi), content)
+        await self._put(_PDF_RESULTS, (source, doi), content)
