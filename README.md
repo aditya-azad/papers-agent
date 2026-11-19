@@ -88,13 +88,14 @@ The skill is available as `paper-summary` in new sessions.
 | `keyword_search` | Keyword search against a paper source (arXiv). |
 | `semantic_search` | Semantic search by natural-language description (arXiv via alphaXiv embeddings). |
 | `get_papers_in_date_range` | List papers from a source published within a date range. |
-| `get_paper_by_url` | Fetch a single paper by its url; the source is inferred from the url. |
-| `get_paper_by_doi` | Fetch a single paper by its doi; the source is inferred from the doi. |
-| `get_paper_authors` | Fetch the authors of a paper by doi. |
-| `get_paper_abstract` | Fetch the abstract of a paper by doi. |
-| `get_paper_references` | Fetch the bibliography of a paper (by doi) as raw reference strings. |
-| `get_paper_citation_key` | Return the citation key of a paper by url or doi (exactly one). |
-| `download_paper_pdf` | Download the pdf of a paper (by doi) into a given directory, named `<citation key>.pdf`. |
-| `get_paper_pdf_text` | Return the full text extracted from the pdf of a paper (by doi). |
-| `get_paper_pdf_images` | Extract the images of a paper's pdf (by doi) into a directory and return their file paths, named `<citation key>_image_<number>.png`. |
+| `get_paper_metadata_by_url` | Fetch the metadata of a single paper by its url (arXiv abstract or pdf page); the source is inferred from the url. |
+| `get_paper_metadata_by_doi` | Fetch the metadata of a single paper by its doi; the source is inferred from the doi. |
+| `get_paper_metadata_references_by_doi` | Fetch the bibliography of a paper (by doi) as raw reference strings. |
+| `get_paper_metadata_references_by_url` | Fetch the bibliography of a paper at the given url (arXiv abstract or pdf page) as raw reference strings; the doi is inferred from the url. |
+| `get_paper_metadata_citation_key_by_url` | Return the citation key of a paper by url. |
+| `get_paper_metadata_citation_key_by_doi` | Return the citation key of a paper by doi. |
+| `get_paper_pdf_text_by_doi` | Return the full text extracted from the pdf of a paper (by doi). |
+| `get_paper_pdf_text_by_url` | Return the full text extracted from the pdf of a paper at the given url (arXiv abstract or pdf page); the doi is inferred from the url. |
+| `get_paper_pdf_images_by_doi` | Extract the images of a paper's pdf (by doi) into a directory and return their file paths, named `<citation key>_image_<number>.png`. |
+| `get_paper_pdf_images_by_url` | Extract the images of a paper's pdf (by url, arXiv abstract or pdf page) into a directory and return their file paths, named `<citation key>_image_<number>.png`; the doi is inferred from the url. |
 

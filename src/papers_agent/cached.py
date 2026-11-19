@@ -48,6 +48,9 @@ class CachedSource(PaperSource):
     def handles_doi(self, doi: Doi) -> bool:
         return self._inner.handles_doi(doi)
 
+    def doi_for_url(self, url: Url) -> Doi:
+        return self._inner.doi_for_url(url)
+
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
         return await self._cached_query(
             "search", {"keyword": keyword, "limit": limit},

@@ -152,6 +152,11 @@ class PaperSource(ABC):
     def handles_doi(cls, doi: Doi) -> bool:
         """Whether this source can resolve the given doi."""
 
+    @classmethod
+    @abstractmethod
+    def doi_for_url(cls, url: Url) -> Doi:
+        """Derive the doi of the paper at the given url."""
+
     @abstractmethod
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]: ...
 
@@ -180,17 +185,15 @@ class PaperSource(ABC):
         """Return the citation key of the paper with the given url."""
         return (await self.get_paper_by_url(url)).citation_key
 
-    async def get_authors(self, doi: Doi) -> PaperAuthors:
-        return (await self.get_paper_by_doi(doi)).authors
-
-    async def get_abstract(self, doi: Doi) -> PaperAbstract:
-        return (await self.get_paper_by_doi(doi)).abstract
-
     async def get_references(self, doi: Doi) -> list[str]:
         """Return the bibliography entries of the given paper as raw strings."""
         raise PaperSourceError(
             f"{type(self).__name__} does not support reference extraction"
         )
+
+    async def get_references_by_url(self, url: Url) -> list[str]:
+        """Return the bibliography entries of the paper at the given url as raw strings."""
+        return await self.get_references(self.doi_for_url(url))
 
     @abstractmethod
     async def download_pdf(self, doi: Doi, directory: LocalPath) -> Path:
@@ -200,6 +203,14 @@ class PaperSource(ABC):
     async def get_pdf_text(self, doi: Doi) -> str:
         """Return the full text extracted from the pdf of the given paper."""
 
+    async def get_pdf_text_by_url(self, url: Url) -> str:
+        """Return the full text extracted from the pdf of the paper at the given url."""
+        return await self.get_pdf_text(self.doi_for_url(url))
+
     @abstractmethod
     async def get_pdf_images(self, doi: Doi, directory: LocalPath) -> list[Path]:
         """Extract the images of the given paper's pdf into the given directory, named after the paper's citation key."""
+
+    async def get_pdf_images_by_url(self, url: Url, directory: LocalPath) -> list[Path]:
+        """Extract the images of the pdf of the paper at the given url into the given directory, named after the paper's citation key."""
+        return await self.get_pdf_images(self.doi_for_url(url), directory)

@@ -58,8 +58,9 @@ _ALPHAXIV_USER_AGENT = "papers-agent/0.1.0"
 _ALPHAXIV_MAX_ATTEMPTS = 3
 _ALPHAXIV_MAX_RETRY_WAIT_SECONDS = 5.0
 _HTTP_TOO_MANY_REQUESTS = 429
-_ABS_URL_PATTERN = re.compile(
-    rf"^https?://(?:www\.)?arxiv\.org/abs/({_ARXIV_ID_PATTERN_TEXT})$",
+_URL_PATTERN = re.compile(
+    rf"^https?://(?:www\.)?arxiv\.org/(?:abs|pdf)/({_ARXIV_ID_PATTERN_TEXT})"
+    r"(?:\.pdf)?/?(?:\?.*)?$",
     re.IGNORECASE,
 )
 
@@ -266,7 +267,16 @@ class ArxivSource(PaperSource):
 
     @classmethod
     def handles_url(cls, url: Url) -> bool:
-        return _ABS_URL_PATTERN.fullmatch(url) is not None
+        return _URL_PATTERN.fullmatch(url) is not None
+
+    @classmethod
+    def doi_for_url(cls, url: Url) -> Doi:
+        """Derive the paper's doi from its arxiv abstract or pdf page url."""
+        match = _URL_PATTERN.fullmatch(url)
+        if match is None:
+            raise PaperNotFoundError(f"no arxiv paper for url {url}")
+        base_id = _VERSION_SUFFIX_PATTERN.sub("", match.group(1).lower())
+        return f"{_ARXIV_DOI_PREFIX}{base_id}"
 
     @classmethod
     def handles_doi(cls, doi: Doi) -> bool:
@@ -277,7 +287,7 @@ class ArxivSource(PaperSource):
         return _ARXIV_ID_PATTERN.fullmatch(arxiv_id) is not None
 
     async def get_paper_by_url(self, url: Url) -> Paper:
-        match = _ABS_URL_PATTERN.fullmatch(url)
+        match = _URL_PATTERN.fullmatch(url)
         if match is None:
             raise PaperNotFoundError(f"no arxiv paper for url {url}")
         return await self._get_by_id(match.group(1).lower())
@@ -479,7 +489,7 @@ class ArxivSource(PaperSource):
 
     def _paper_from_entry(self, entry: ET.Element) -> Paper:
         entry_id = self._required_text(entry, f"{{{_ATOM_NAMESPACE}}}id")
-        match = _ABS_URL_PATTERN.fullmatch(entry_id)
+        match = _URL_PATTERN.fullmatch(entry_id)
         if match is None:
             raise PaperSourceError(f"unexpected arxiv entry id {entry_id}")
         arxiv_id = match.group(1).lower()

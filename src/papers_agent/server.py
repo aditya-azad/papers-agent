@@ -17,8 +17,6 @@ from papers_agent.types import (
     LocalPath,
     NonEmptyStr,
     Paper,
-    PaperAbstract,
-    PaperAuthors,
     PaperSource,
     PaperSourceName,
     Url,
@@ -127,39 +125,23 @@ async def get_papers_in_date_range(
 
 
 @mcp.tool()
-async def get_paper_by_url(
+async def get_paper_metadata_by_url(
     url: Url,
 ) -> Paper:
-    """Fetch a single paper by its url; the source is inferred from the url."""
+    """Fetch the metadata of a single paper by its url; the source is inferred from the url."""
     return await _run(_source_for_url(url), lambda s: s.get_paper_by_url(url))
 
 
 @mcp.tool()
-async def get_paper_by_doi(
+async def get_paper_metadata_by_doi(
     doi: Doi,
 ) -> Paper:
-    """Fetch a single paper by its doi; the source is inferred from the doi."""
+    """Fetch the metadata of a single paper by its doi; the source is inferred from the doi."""
     return await _run(_source_for_doi(doi), lambda s: s.get_paper_by_doi(doi))
 
 
 @mcp.tool()
-async def get_paper_authors(
-    doi: Doi,
-) -> PaperAuthors:
-    """Fetch the authors of a paper by its doi."""
-    return await _run(_source_for_doi(doi), lambda s: s.get_authors(doi))
-
-
-@mcp.tool()
-async def get_paper_abstract(
-    doi: Doi,
-) -> PaperAbstract:
-    """Fetch the abstract of a paper by its doi."""
-    return await _run(_source_for_doi(doi), lambda s: s.get_abstract(doi))
-
-
-@mcp.tool()
-async def get_paper_references(
+async def get_paper_metadata_references_by_doi(
     doi: Doi,
 ) -> list[str]:
     """Fetch the bibliography of the paper with the given doi as raw reference strings."""
@@ -167,33 +149,39 @@ async def get_paper_references(
 
 
 @mcp.tool()
-async def get_paper_citation_key(
-    url: Url | None = None,
-    doi: Doi | None = None,
-) -> str:
-    """Return the citation key (authorShortTitleYear) of the paper with the given url or doi; provide exactly one."""
-    if url is not None and doi is not None:
-        raise ToolError("provide either url or doi, not both")
-    if url is not None:
-        return await _run(_source_for_url(url), lambda s: s.citation_key_for_url(url))
-    if doi is not None:
-        return await _run(_source_for_doi(doi), lambda s: s.citation_key(doi))
-    raise ToolError("provide exactly one of url or doi")
+async def get_paper_metadata_references_by_url(
+    url: Url,
+) -> list[str]:
+    """Fetch the bibliography of the paper at the given url as raw reference strings; the doi is inferred from the url."""
+    return await _run(_source_for_url(url), lambda s: s.get_references_by_url(url))
 
 
 @mcp.tool()
-async def download_paper_pdf(
+async def get_paper_metadata_citation_key_by_url(
+    url: Url,
+) -> str:
+    """Return the citation key (authorShortTitleYear) of the paper with the given url."""
+    return await _run(_source_for_url(url), lambda s: s.citation_key_for_url(url))
+
+
+@mcp.tool()
+async def get_paper_metadata_citation_key_by_doi(
     doi: Doi,
-    directory: LocalPath,
 ) -> str:
-    """Download the pdf of the paper with the given doi into the given directory, named after the paper's citation key."""
-    return str(
-        await _run(_source_for_doi(doi), lambda s: s.download_pdf(doi, directory))
-    )
+    """Return the citation key (authorShortTitleYear) of the paper with the given doi."""
+    return await _run(_source_for_doi(doi), lambda s: s.citation_key(doi))
 
 
 @mcp.tool()
-async def get_paper_pdf_text(
+async def get_paper_pdf_text_by_url(
+    url: Url,
+) -> str:
+    """Return the full text extracted from the pdf of the paper at the given url (e.g. an arxiv abstract or pdf page); the doi is inferred from the url."""
+    return await _run(_source_for_url(url), lambda s: s.get_pdf_text_by_url(url))
+
+
+@mcp.tool()
+async def get_paper_pdf_text_by_doi(
     doi: Doi,
 ) -> str:
     """Return the full text extracted from the pdf of the paper with the given doi."""
@@ -207,12 +195,22 @@ def get_sources() -> list[str]:
 
 
 @mcp.tool()
-async def get_paper_pdf_images(
+async def get_paper_pdf_images_by_doi(
     doi: Doi,
     directory: LocalPath,
 ) -> list[str]:
     """Extract the images of the given paper's pdf into the given directory and return their file paths; each image is named <citation key>_image_<number>."""
     paths = await _run(_source_for_doi(doi), lambda s: s.get_pdf_images(doi, directory))
+    return [str(image_path) for image_path in paths]
+
+
+@mcp.tool()
+async def get_paper_pdf_images_by_url(
+    url: Url,
+    directory: LocalPath,
+) -> list[str]:
+    """Extract the images of the pdf of the paper at the given url into the given directory and return their file paths; each image is named <citation key>_image_<number>; the doi is inferred from the url."""
+    paths = await _run(_source_for_url(url), lambda s: s.get_pdf_images_by_url(url, directory))
     return [str(image_path) for image_path in paths]
 
 
