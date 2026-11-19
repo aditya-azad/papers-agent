@@ -61,22 +61,6 @@ pi mcp add papers --url http://localhost:8000/mcp
 The bind host/port can also be set via `PAPERS_AGENT_HOST` and
 `PAPERS_AGENT_PORT`.
 
-### Docker
-
-Build and run the server in Docker (serves over HTTP on port 8000):
-
-```sh
-docker compose up -d --build
-```
-
-This exposes `http://localhost:8000/mcp` on localhost only. `docker run`
-works too:
-
-```sh
-docker build -t papers-agent .
-docker run -p 127.0.0.1:8000:8000 papers-agent
-```
-
 No external accounts or API keys are required: the arXiv API and the
 alphaXiv embedding API are public, though both are rate-limited.
 
