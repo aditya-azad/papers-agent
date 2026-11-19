@@ -1,0 +1,1 @@
+- NEVER write comments. The code identifiers and variables should make it obvious what the purpose is

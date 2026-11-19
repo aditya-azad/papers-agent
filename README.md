@@ -64,6 +64,41 @@ The bind host/port can also be set via `PAPERS_AGENT_HOST` and
 No external accounts or API keys are required: the arXiv API and the
 alphaXiv embedding API are public, though both are rate-limited.
 
+### Local arXiv metadata database (optional)
+
+The arXiv source can serve metadata from a local arxiv metadata
+database instead of calling the arXiv API. The database (default:
+`~/.local/share/papers-agent/arxiv/metadata.sqlite`, override via
+`PAPERS_AGENT_ARXIV_BACKUP_DB`) is a writable sqlite file holding the
+papers of an arXiv metadata dump (e.g. the Kaggle `arxiv` dataset,
+located via `PAPERS_AGENT_ARXIV_DUMP_DB`, default:
+`~/database/third-party-media/papers/arxiv/metadata.sqlite`) plus
+derived indexes: a doi map, first-submission dates and a full-text
+search index.
+
+| Operation | Served from | When the live API is used |
+|---|---|---|
+| paper metadata by url/doi, citation keys, batch hydration | database | paper missing from the database |
+| keyword search | database full-text index | fewer than `limit` database hits (merges both) |
+| papers in date range | database | range reaches past the database's cutoff |
+| references, pdf text, pdf images | live arxiv | always (not in the database) |
+
+The database is kept in sync automatically: on first use the server
+compares a fingerprint of the upstream dump against the one recorded in
+the database and, on mismatch, spawns a detached sync subprocess. The
+sync diffs the dump against the database and patches only changed,
+new and vanished rows — including their derived rows and full-text
+entries. The first run (or a database without recorded metadata)
+performs a one-time full index build. While syncing, queries fall back
+to the live API. Concurrent syncs are impossible (flock guard), and
+the `backup_status` tool reports the current state (ready, syncing
+with progress, stale, missing).
+
+No manual steps are needed: the first sync builds the database from
+the dump directly (the dump itself is never modified). The first build
+takes a while and several GB of disk; afterwards each sync only
+patches the rows the new dump changed.
+
 ## Skills
 
 Paper-summarization guidance (a fixed structured note format covering architecture, inputs, outputs, loss functions, training procedure, evaluation, contributions over prior work, limitations, and future work) lives in a companion skill for the [pi](https://github.com/badlogic/pi-mono) agent, shipped in this repository under `skills/`. The skill is intentionally not placed in the auto-discovered project skills directory (`.agents/skills/`): it is meant to be installed into your pi agent, not tied to this checkout.

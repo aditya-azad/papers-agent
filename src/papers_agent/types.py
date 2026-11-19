@@ -15,7 +15,7 @@ from pydantic import (
 )
 
 from papers_agent.citation_key import citation_key as _compute_citation_key
-from papers_agent.errors import PaperSourceError
+from papers_agent.errors import PaperNotFoundError, PaperSourceError
 
 
 def _ensure_utc(value: datetime | str) -> datetime:
@@ -142,6 +142,10 @@ class Paper(BaseModel):
 class PaperSource(ABC):
     source: ClassVar[PaperSourceName]
 
+    def prepare(self) -> None:
+        """Called once before the first query; sources may start
+        background work (e.g. building a local index)."""
+
     @classmethod
     @abstractmethod
     def handles_url(cls, url: Url) -> bool:
@@ -158,32 +162,75 @@ class PaperSource(ABC):
         """Derive the doi of the paper at the given url."""
 
     @abstractmethod
-    async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]: ...
+    async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper] | None:
+        """Keyword search. Returns None when the source cannot answer the
+        query (e.g. a local index is unavailable or does not cover the
+        corpus); an empty list means no matches."""
+
+    async def semantic_search_ids(self, query: NonEmptyStr, limit: int) -> list[str]:
+        """The source's ids for a semantic query, in relevance order.
+
+        Raises PaperSourceError when the source does not support semantic
+        search. Ids are hydrated through papers_by_ids, so a source only
+        needs id discovery; a chain combines the two.
+        """
+        raise PaperSourceError(
+            f"{type(self).__name__} does not support semantic search"
+        )
 
     async def semantic_search(self, query: NonEmptyStr, limit: int) -> list[Paper]:
         """Search papers by a natural-language semantic description."""
+        ids = (await self.semantic_search_ids(query))[:limit]
+        if not ids:
+            return []
+        papers = await self.papers_by_ids(ids)
+        return [paper for arxiv_id in ids if (paper := papers.get(arxiv_id))]
+
+    async def papers_by_ids(self, arxiv_ids: list[str]) -> dict[str, Paper]:
+        """Hydrate the given ids into papers, keyed by id.
+
+        Ids the source cannot resolve are absent from the result. Raises
+        PaperSourceError when the source does not support batch hydration
+        or the lookup fails.
+        """
         raise PaperSourceError(
-            f"{type(self).__name__} does not support semantic search"
+            f"{type(self).__name__} does not support batch hydration"
         )
 
     @abstractmethod
     async def get_papers_in_date_range(
         self, start: UTCDatetime, end: UTCDatetime, limit: int
-    ) -> list[Paper]: ...
+    ) -> list[Paper] | None:
+        """Papers first submitted within [start, end], newest first.
+        Returns None when the source cannot answer the range (e.g. a
+        local index does not cover it fully); an empty list means no
+        matches."""
 
     @abstractmethod
-    async def get_paper_by_url(self, url: Url) -> Paper: ...
+    async def get_paper_by_url(self, url: Url) -> Paper | None:
+        """The paper at the given url, or None when the source cannot
+        resolve it (e.g. a local index does not have it). Sources that
+        can definitively determine absence raise PaperNotFoundError."""
 
     @abstractmethod
-    async def get_paper_by_doi(self, doi: Doi) -> Paper: ...
+    async def get_paper_by_doi(self, doi: Doi) -> Paper | None:
+        """The paper with the given doi, or None when the source cannot
+        resolve it. Sources that can definitively determine absence raise
+        PaperNotFoundError."""
 
     async def citation_key(self, doi: Doi) -> str:
         """Return the citation key of the paper with the given doi."""
-        return (await self.get_paper_by_doi(doi)).citation_key
+        paper = await self.get_paper_by_doi(doi)
+        if paper is None:
+            raise PaperNotFoundError(f"no paper for doi {doi}")
+        return paper.citation_key
 
     async def citation_key_for_url(self, url: Url) -> str:
         """Return the citation key of the paper with the given url."""
-        return (await self.get_paper_by_url(url)).citation_key
+        paper = await self.get_paper_by_url(url)
+        if paper is None:
+            raise PaperNotFoundError(f"no paper for url {url}")
+        return paper.citation_key
 
     async def get_references(self, doi: Doi) -> list[str]:
         """Return the bibliography entries of the given paper as raw strings."""

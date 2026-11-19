@@ -12,6 +12,7 @@ dependencies = [
     "defusedxml>=0.7.1",
     "mcp>=2.3.0",
     "pymupdf>=1.25.0",
+    "fastembed>=0.9.1",
 ]
 
 [project.scripts]

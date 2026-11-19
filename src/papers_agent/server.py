@@ -12,6 +12,8 @@ from papers_agent.cache import SourceCache
 from papers_agent.cached import CachedSource
 from papers_agent.errors import PaperSourceError
 from papers_agent.sources.arxiv import ArxivSource
+from papers_agent.sources.arxiv_backup import ArxivBackupSource
+from papers_agent.sources.chain import ChainedSource
 from papers_agent.types import (
     Doi,
     LocalPath,
@@ -47,14 +49,19 @@ mcp = MCPServer(
         "registered paper sources (currently arXiv). Prefer "
         "semantic_search for natural-language topic descriptions "
         "(arXiv uses alphaXiv embeddings); use keyword_search for "
-        "keyword queries. Tools taking a url or doi infer the source "
-        "from the identifier."
+        "keyword queries. Queries are answered from a local arxiv "
+        "metadata database when it covers them and fall back to the "
+        "live arxiv api otherwise (backup_status reports its state). "
+        "Tools taking a url or doi infer the source from the identifier."
     ),
     middleware=[_evict_stale_before_tool_call],
 )
 
 _sources: dict[PaperSourceName, PaperSource] = {
-    "arxiv": CachedSource(ArxivSource(), cache=_cache)
+    "arxiv": CachedSource(
+        ChainedSource([ArxivBackupSource(), ArxivSource()]),
+        cache=_cache,
+    )
 }
 
 
@@ -195,6 +202,13 @@ async def get_paper_pdf_text_by_doi(
 def get_sources() -> list[str]:
     """List the names of all registered paper sources."""
     return list(_sources)
+
+
+@mcp.tool()
+def backup_status() -> dict[str, str]:
+    """Report the state of the local arxiv metadata database:
+    ready, syncing (with progress), stale or missing."""
+    return ArxivBackupSource().syncer.status()
 
 
 @mcp.tool()

@@ -1,6 +1,5 @@
 import asyncio
 import os
-import re
 import secrets
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
@@ -9,7 +8,6 @@ from pathlib import Path
 
 import httpx
 from defusedxml import ElementTree as DefusedElementTree
-from pydantic import ValidationError
 
 from papers_agent.citation_key import (
     unique_image_base,
@@ -20,6 +18,27 @@ from papers_agent.errors import (
     PaperSourceError,
 )
 from papers_agent.pdf import TempPdf, extract_pdf_images, extract_pdf_text
+from papers_agent.sources.arxiv_paper import (
+    ARXIV_DOI_PREFIX as _ARXIV_DOI_PREFIX,
+)
+from papers_agent.sources.arxiv_paper import (
+    ARXIV_ID_PATTERN as _ARXIV_ID_PATTERN,
+)
+from papers_agent.sources.arxiv_paper import (
+    arxiv_id_for_doi as _arxiv_id_for_doi,
+)
+from papers_agent.sources.arxiv_paper import (
+    arxiv_id_from_doi as _arxiv_id_from_doi,
+)
+from papers_agent.sources.arxiv_paper import (
+    arxiv_id_from_url as _arxiv_id_from_url,
+)
+from papers_agent.sources.arxiv_paper import (
+    base_arxiv_id as _base_arxiv_id,
+)
+from papers_agent.sources.arxiv_paper import (
+    paper_from_arxiv_fields,
+)
 from papers_agent.types import (
     Doi,
     LocalPath,
@@ -50,25 +69,15 @@ _ARXIV = _ARXIV_NAMESPACE
 _OAI = _OAI_PMH_NAMESPACE
 _OAI_ARXIV = _OAI_ARXIV_NAMESPACE
 _OAI_NOT_FOUND_ERROR_CODE = "idDoesNotExist"
-_ARXIV_DOI_PREFIX = "10.48550/arxiv."
-_PUBLISHER = "arXiv"
 _USER_AGENT = "papers-agent/0.1.0"
 _ARXIV_DATE_FORMAT = "%Y%m%d%H%M"
 
-_ARXIV_ID_PATTERN_TEXT = r"(?:[a-z.-]+/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?"
-_ARXIV_ID_PATTERN = re.compile(_ARXIV_ID_PATTERN_TEXT, re.IGNORECASE)
-_VERSION_SUFFIX_PATTERN = re.compile(r"v\d+$", re.IGNORECASE)
 _ALPHAXIV_API_URL = "https://api.alphaxiv.org"
 _ALPHAXIV_DISCOVER_PATH = "/search/v2/paper/discover/embedding"
 _ALPHAXIV_USER_AGENT = "papers-agent/0.1.0"
 _ALPHAXIV_MAX_ATTEMPTS = 3
 _ALPHAXIV_MAX_RETRY_WAIT_SECONDS = 5.0
 _HTTP_TOO_MANY_REQUESTS = 429
-_URL_PATTERN = re.compile(
-    rf"^https?://(?:www\.)?arxiv\.org/(?:abs|pdf)/({_ARXIV_ID_PATTERN_TEXT})"
-    r"(?:\.pdf)?/?(?:\?.*)?$",
-    re.IGNORECASE,
-)
 
 
 def _random_email() -> str:
@@ -83,28 +92,6 @@ def _retry_after_seconds(value: str | None) -> float | None:
         return max(float(value), 0.0)
     except ValueError:
         return None
-
-
-def _arxiv_id_from_doi(doi: Doi) -> str | None:
-    normalized = doi.lower()
-    if not normalized.startswith(_ARXIV_DOI_PREFIX):
-        return None
-    arxiv_id = normalized.removeprefix(_ARXIV_DOI_PREFIX)
-    if _ARXIV_ID_PATTERN.fullmatch(arxiv_id) is None:
-        return None
-    return arxiv_id
-
-
-def _arxiv_id_for_doi(doi: Doi) -> str:
-    arxiv_id = _arxiv_id_from_doi(doi)
-    if arxiv_id is None:
-        raise PaperNotFoundError(f"no arxiv paper for doi {doi}")
-    return arxiv_id
-
-
-def _arxiv_id_from_url(url: Url) -> str | None:
-    match = _URL_PATTERN.fullmatch(url)
-    return match.group(1).lower() if match else None
 
 
 class _BibliographyExtractor(HTMLParser):
@@ -174,9 +161,15 @@ def _extract_references(html: str) -> list[str]:
 
 
 class ArxivSource(PaperSource):
+    """Live arxiv api and alphaxiv; no local state."""
+
     source = "arxiv"
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
+        """Keyword search via the live arxiv api."""
+        return await self._search_api(keyword, limit)
+
+    async def _search_api(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
         data = await self._request(
             _BASE_URL,
             {
@@ -188,20 +181,15 @@ class ArxivSource(PaperSource):
         )
         return [self._paper_from_entry(entry) for entry in self._entries(data)]
 
-    async def semantic_search(self, query: NonEmptyStr, limit: int) -> list[Paper]:
-        """Search arxiv semantically via the alphaxiv embedding discovery api.
+    async def semantic_search_ids(self, query: NonEmptyStr, limit: int) -> list[str]:
+        """Semantic arxiv ids via the alphaxiv embedding discovery api.
 
         alphaxiv ranks titles/abstracts by embedding similarity over its own
-        fixed server-side candidate pool, so `limit` only caps the hydrated
-        results. Hits carry arxiv ids but no authors, so each hit is resolved
-        against the arxiv export api (one batched id_list request) to build
-        full papers, preserving alphaxiv's ranking order.
+        fixed server-side candidate pool. Hits carry arxiv ids but no
+        authors, so the ids are hydrated into full papers afterwards (the
+        chain does this through papers_by_ids, preserving ranking order).
         """
-        arxiv_ids = (await self._alphaxiv_semantic_ids(query))[:limit]
-        if not arxiv_ids:
-            return []
-        papers = await self._papers_by_ids(arxiv_ids)
-        return [paper for arxiv_id in arxiv_ids if (paper := papers.get(arxiv_id))]
+        return (await self._alphaxiv_semantic_ids(query))[:limit]
 
     async def _alphaxiv_semantic_ids(self, query: str) -> list[str]:
         base_url = os.environ.get("ALPHAXIV_API_URL") or _ALPHAXIV_API_URL
@@ -242,12 +230,16 @@ class ArxivSource(PaperSource):
             paper_id = hit.get("paperId") if isinstance(hit, dict) else None
             if not isinstance(paper_id, str) or not paper_id:
                 continue
-            arxiv_id = _VERSION_SUFFIX_PATTERN.sub("", paper_id.lower())
+            arxiv_id = _base_arxiv_id(paper_id.lower())
             if _ARXIV_ID_PATTERN.fullmatch(arxiv_id) and arxiv_id not in arxiv_ids:
                 arxiv_ids.append(arxiv_id)
         return arxiv_ids
 
-    async def _papers_by_ids(self, arxiv_ids: list[str]) -> dict[str, Paper]:
+    async def papers_by_ids(self, arxiv_ids: list[str]) -> dict[str, Paper]:
+        """Hydrate arxiv ids into papers via one batched api request.
+
+        Ids not on arxiv (or no longer there) are absent from the result.
+        """
         data = await self._request(
             _BASE_URL,
             {
@@ -262,6 +254,13 @@ class ArxivSource(PaperSource):
         return papers
 
     async def get_papers_in_date_range(
+        self, start: UTCDatetime, end: UTCDatetime, limit: int
+    ) -> list[Paper]:
+        """Papers first submitted in the range, newest first, via the live
+        arxiv api."""
+        return await self._date_range_api(start, end, limit)
+
+    async def _date_range_api(
         self, start: UTCDatetime, end: UTCDatetime, limit: int
     ) -> list[Paper]:
         data = await self._request(
@@ -288,8 +287,7 @@ class ArxivSource(PaperSource):
         arxiv_id = _arxiv_id_from_url(url)
         if arxiv_id is None:
             raise PaperNotFoundError(f"no arxiv paper for url {url}")
-        base_id = _VERSION_SUFFIX_PATTERN.sub("", arxiv_id)
-        return f"{_ARXIV_DOI_PREFIX}{base_id}"
+        return f"{_ARXIV_DOI_PREFIX}{_base_arxiv_id(arxiv_id)}"
 
     @classmethod
     def handles_doi(cls, doi: Doi) -> bool:
@@ -323,7 +321,7 @@ class ArxivSource(PaperSource):
         Papers without an html version (older submissions or pdf-only
         uploads) raise a PaperSourceError.
         """
-        arxiv_id = _VERSION_SUFFIX_PATTERN.sub("", _arxiv_id_for_doi(doi).lower())
+        arxiv_id = _base_arxiv_id(_arxiv_id_for_doi(doi))
         url = _HTML_URL_TEMPLATE.format(arxiv_id=arxiv_id)
         response = await self._get(
             url, follow_redirects=True, context="arxiv html request"
@@ -382,7 +380,7 @@ class ArxivSource(PaperSource):
                 tmp_path.unlink(missing_ok=True)
 
     async def _get_by_id(self, arxiv_id: str) -> Paper:
-        base_id = _VERSION_SUFFIX_PATTERN.sub("", arxiv_id.lower())
+        base_id = _base_arxiv_id(arxiv_id)
         data = await self._request(
             _OAI_BASE_URL,
             {
@@ -459,7 +457,7 @@ class ArxivSource(PaperSource):
             raise PaperSourceError(
                 f"arxiv oai returned id {record_id} for requested {base_id}"
             )
-        return self._build_paper(
+        return paper_from_arxiv_fields(
             base_id=base_id,
             name=self._required_text(metadata, f"{{{_OAI_ARXIV}}}title"),
             doi=self._optional_text(metadata, f"{{{_OAI_ARXIV}}}doi"),
@@ -498,8 +496,8 @@ class ArxivSource(PaperSource):
         arxiv_id = _arxiv_id_from_url(entry_id)
         if arxiv_id is None:
             raise PaperSourceError(f"unexpected arxiv entry id {entry_id}")
-        base_id = _VERSION_SUFFIX_PATTERN.sub("", arxiv_id)
-        return self._build_paper(
+        base_id = _base_arxiv_id(arxiv_id)
+        return paper_from_arxiv_fields(
             base_id=base_id,
             name=self._required_text(entry, f"{{{_ATOM}}}title"),
             doi=self._optional_text(entry, f"{{{_ARXIV}}}doi"),
@@ -515,30 +513,6 @@ class ArxivSource(PaperSource):
             abstract=self._required_text(entry, f"{{{_ATOM}}}summary"),
             published_at=self._required_text(entry, f"{{{_ATOM}}}published"),
         )
-
-    def _build_paper(
-        self,
-        *,
-        base_id: str,
-        name: str,
-        doi: str | None,
-        authors: list[str],
-        abstract: str,
-        published_at: datetime | str | None,
-    ) -> Paper:
-        try:
-            return Paper(
-                source="arxiv",
-                name=name,
-                url=f"https://arxiv.org/abs/{base_id}",
-                doi=doi or f"{_ARXIV_DOI_PREFIX}{base_id}",
-                authors=authors,
-                publisher=_PUBLISHER,
-                abstract=abstract,
-                published_at=published_at,
-            )
-        except ValidationError as exc:
-            raise PaperSourceError("invalid arxiv entry data") from exc
 
     @staticmethod
     def _required_text(node: ET.Element, path: str) -> str:
