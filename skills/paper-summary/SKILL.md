@@ -20,8 +20,12 @@ interesting content is the delta over the base, not the field-level background.
    the appendix ("More Implementation Details", "Training Details") are where
    most of the content hides — read them fully.
 3. **Write** the note following the template and style rules.
-4. Save to the path the user gives; if none, save as `<paper-short-name>.md`
-   (lowercase, no spaces) in the user's notes directory.
+4. **Do not save the note automatically.** Present the finished note in the
+   reply and wait. Only write it to disk when the user explicitly asks to
+   save it — and only to the exact location they give (a path or a named
+   notes directory). Never invent a default path or filename, even if the
+   user has saved previous notes somewhere; each save must follow an explicit
+   instruction for that note.
 
 ## Template
 
