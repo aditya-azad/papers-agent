@@ -75,18 +75,21 @@ async def _run[T](
         raise ToolError(str(exc)) from exc
 
 
-def _source_for_url(url: Url) -> PaperSource:
+def _source_for(
+    accepted: Callable[[PaperSource], bool], identifier: str, kind: str
+) -> PaperSource:
     for source in _sources.values():
-        if source.handles_url(url):
+        if accepted(source):
             return source
-    raise ToolError(f"no registered paper source can resolve url '{url}'")
+    raise ToolError(f"no registered paper source can resolve {kind} '{identifier}'")
+
+
+def _source_for_url(url: Url) -> PaperSource:
+    return _source_for(lambda source: source.handles_url(url), url, "url")
 
 
 def _source_for_doi(doi: Doi) -> PaperSource:
-    for source in _sources.values():
-        if source.handles_doi(doi):
-            return source
-    raise ToolError(f"no registered paper source can resolve doi '{doi}'")
+    return _source_for(lambda source: source.handles_doi(doi), doi, "doi")
 
 
 @mcp.tool()

@@ -1,5 +1,5 @@
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -94,22 +94,27 @@ def _disambiguation_suffixes() -> Iterator[str]:
             yield first + second
 
 
-def unique_pdf_path(directory: Path, base: str) -> Path:
-    directory.mkdir(parents=True, exist_ok=True)
-    taken = {path.stem for path in directory.glob("*.pdf")}
-    for suffix in _disambiguation_suffixes():
-        candidate = base + suffix
-        if candidate not in taken:
-            return directory / f"{candidate}.pdf"
-    msg = f"exhausted citation key space for base {base!r}"
-    raise PaperSourceError(msg)
-
-
-def unique_image_base(directory: Path, base: str) -> str:
+def _unique_base(
+    directory: Path, base: str, taken: Callable[[str], bool]
+) -> str:
+    """First non-taken disambiguation of ``base`` in ``directory``."""
     directory.mkdir(parents=True, exist_ok=True)
     for suffix in _disambiguation_suffixes():
         candidate = base + suffix
-        if not any(directory.glob(f"{candidate}_image_*")):
+        if not taken(candidate):
             return candidate
     msg = f"exhausted citation key space for base {base!r}"
     raise PaperSourceError(msg)
+
+
+def unique_pdf_path(directory: Path, base: str) -> Path:
+    taken = {path.stem for path in directory.glob("*.pdf")}
+    candidate = _unique_base(directory, base, taken.__contains__)
+    return directory / f"{candidate}.pdf"
+
+
+def unique_image_base(directory: Path, base: str) -> str:
+    return _unique_base(
+        directory, base,
+        lambda candidate: any(directory.glob(f"{candidate}_image_*")),
+    )

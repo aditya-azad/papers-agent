@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import TypeVar
 
 from papers_agent.cache import SourceCache
 from papers_agent.citation_key import unique_image_base, unique_pdf_path
@@ -18,6 +19,8 @@ from papers_agent.types import (
     Url,
     UTCDatetime,
 )
+
+T = TypeVar("T")
 
 
 class CachedSource(PaperSource):
@@ -73,30 +76,22 @@ class CachedSource(PaperSource):
         )
 
     async def get_paper_by_url(self, url: Url) -> Paper:
-        paper = await self._cache.get_paper_by_url(self.source, url)
-        if paper is not None:
-            return paper
-        paper = await self._inner.get_paper_by_url(url)
-        await self._cache.put_paper(self.source, paper)
-        return paper
+        return await self._cached_paper(
+            lambda: self._cache.get_paper_by_url(self.source, url),
+            lambda: self._inner.get_paper_by_url(url),
+        )
 
     async def get_paper_by_doi(self, doi: Doi) -> Paper:
-        paper = await self._cache.get_paper_by_doi(self.source, doi)
-        if paper is not None:
-            return paper
-        paper = await self._inner.get_paper_by_doi(doi)
-        await self._cache.put_paper(self.source, paper)
-        return paper
+        return await self._cached_paper(
+            lambda: self._cache.get_paper_by_doi(self.source, doi),
+            lambda: self._inner.get_paper_by_doi(doi),
+        )
 
     async def get_references(self, doi: Doi) -> list[str]:
-        text = await self._cache.get_text(self.source, "references", doi)
-        if text is not None:
-            return text.split("\n")
-        references = await self._inner.get_references(doi)
-        await self._cache.put_text(
-            self.source, "references", doi, "\n".join(references)
-        )
-        return references
+        async def fetch() -> str:
+            return "\n".join(await self._inner.get_references(doi))
+
+        return (await self._cached_text("references", doi, fetch)).split("\n")
 
     async def download_pdf(self, doi: Doi, directory: LocalPath) -> Path:
         paper = await self.get_paper_by_doi(doi)
@@ -106,26 +101,46 @@ class CachedSource(PaperSource):
         return path
 
     async def get_pdf_text(self, doi: Doi) -> str:
-        text = await self._cache.get_text(self.source, "pdf-text", doi)
-        if text is not None:
-            return text
-        blob = await self._pdf_blob(doi)
-        with TempPdf() as tmp_path:
-            await asyncio.to_thread(tmp_path.write_bytes, blob)
-            text = await asyncio.to_thread(extract_pdf_text, tmp_path)
-        await self._cache.put_text(self.source, "pdf-text", doi, text)
-        return text
+        return await self._cached_text(
+            "pdf-text", doi, lambda: self._with_pdf_blob(doi, extract_pdf_text)
+        )
 
     async def get_pdf_images(self, doi: Doi, directory: LocalPath) -> list[Path]:
         images_dir = Path(directory)
         paper = await self.get_paper_by_doi(doi)
         base = unique_image_base(images_dir, paper.citation_key)
+        return await self._with_pdf_blob(
+            doi, lambda path: extract_pdf_images(path, images_dir, base)
+        )
+
+    async def _cached_paper(
+        self,
+        get: Callable[[], Awaitable[Paper | None]],
+        fetch: Callable[[], Awaitable[Paper]],
+    ) -> Paper:
+        paper = await get()
+        if paper is None:
+            paper = await fetch()
+            await self._cache.put_paper(self.source, paper)
+        return paper
+
+    async def _cached_text(
+        self,
+        kind: str,
+        doi: Doi,
+        fetch: Callable[[], Awaitable[str]],
+    ) -> str:
+        text = await self._cache.get_text(self.source, kind, doi)
+        if text is None:
+            text = await fetch()
+            await self._cache.put_text(self.source, kind, doi, text)
+        return text
+
+    async def _with_pdf_blob(self, doi: Doi, extract: Callable[[Path], T]) -> T:
         blob = await self._pdf_blob(doi)
         with TempPdf() as tmp_path:
             await asyncio.to_thread(tmp_path.write_bytes, blob)
-            return await asyncio.to_thread(
-                extract_pdf_images, tmp_path, images_dir, base
-            )
+            return await asyncio.to_thread(extract, tmp_path)
 
     async def _pdf_blob(self, doi: Doi) -> bytes:
         blob = await self._cache.get_pdf(self.source, doi)

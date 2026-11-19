@@ -43,6 +43,12 @@ _OAI_PMH_NAMESPACE = "http://www.openarchives.org/OAI/2.0/"
 _OAI_ARXIV_NAMESPACE = "http://arxiv.org/OAI/arXiv/"
 _OAI_METADATA_PREFIX = "arXiv"
 _OAI_IDENTIFIER_PREFIX = "oai:arXiv.org:"
+
+# Short aliases so the xml tag f-strings below stay readable.
+_ATOM = _ATOM_NAMESPACE
+_ARXIV = _ARXIV_NAMESPACE
+_OAI = _OAI_PMH_NAMESPACE
+_OAI_ARXIV = _OAI_ARXIV_NAMESPACE
 _OAI_NOT_FOUND_ERROR_CODE = "idDoesNotExist"
 _ARXIV_DOI_PREFIX = "10.48550/arxiv."
 _PUBLISHER = "arXiv"
@@ -94,6 +100,11 @@ def _arxiv_id_for_doi(doi: Doi) -> str:
     if arxiv_id is None:
         raise PaperNotFoundError(f"no arxiv paper for doi {doi}")
     return arxiv_id
+
+
+def _arxiv_id_from_url(url: Url) -> str | None:
+    match = _URL_PATTERN.fullmatch(url)
+    return match.group(1).lower() if match else None
 
 
 class _BibliographyExtractor(HTMLParser):
@@ -167,6 +178,7 @@ class ArxivSource(PaperSource):
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
         data = await self._request(
+            _BASE_URL,
             {
                 "search_query": f"all:{keyword}",
                 "max_results": str(limit),
@@ -218,8 +230,7 @@ class ArxivSource(PaperSource):
                 "alphaxiv is rate-limiting requests "
                 f"(status {_HTTP_TOO_MANY_REQUESTS}); retry later"
             )
-        if response.status_code != 200:
-            raise PaperSourceError(f"alphaxiv returned status {response.status_code}")
+        self._raise_for_status(response, "alphaxiv")
         try:
             hits = response.json()
         except ValueError as exc:
@@ -238,6 +249,7 @@ class ArxivSource(PaperSource):
 
     async def _papers_by_ids(self, arxiv_ids: list[str]) -> dict[str, Paper]:
         data = await self._request(
+            _BASE_URL,
             {
                 "id_list": ",".join(arxiv_ids),
                 "max_results": str(len(arxiv_ids)),
@@ -253,6 +265,7 @@ class ArxivSource(PaperSource):
         self, start: UTCDatetime, end: UTCDatetime, limit: int
     ) -> list[Paper]:
         data = await self._request(
+            _BASE_URL,
             {
                 "search_query": (
                     f"submittedDate:[{start.strftime(_ARXIV_DATE_FORMAT)}"
@@ -267,38 +280,35 @@ class ArxivSource(PaperSource):
 
     @classmethod
     def handles_url(cls, url: Url) -> bool:
-        return _URL_PATTERN.fullmatch(url) is not None
+        return _arxiv_id_from_url(url) is not None
 
     @classmethod
     def doi_for_url(cls, url: Url) -> Doi:
         """Derive the paper's doi from its arxiv abstract or pdf page url."""
-        match = _URL_PATTERN.fullmatch(url)
-        if match is None:
+        arxiv_id = _arxiv_id_from_url(url)
+        if arxiv_id is None:
             raise PaperNotFoundError(f"no arxiv paper for url {url}")
-        base_id = _VERSION_SUFFIX_PATTERN.sub("", match.group(1).lower())
+        base_id = _VERSION_SUFFIX_PATTERN.sub("", arxiv_id)
         return f"{_ARXIV_DOI_PREFIX}{base_id}"
 
     @classmethod
     def handles_doi(cls, doi: Doi) -> bool:
-        normalized = doi.lower()
-        if not normalized.startswith(_ARXIV_DOI_PREFIX):
-            return False
-        arxiv_id = normalized.removeprefix(_ARXIV_DOI_PREFIX)
-        return _ARXIV_ID_PATTERN.fullmatch(arxiv_id) is not None
+        return _arxiv_id_from_doi(doi) is not None
 
     async def get_paper_by_url(self, url: Url) -> Paper:
-        match = _URL_PATTERN.fullmatch(url)
-        if match is None:
+        arxiv_id = _arxiv_id_from_url(url)
+        if arxiv_id is None:
             raise PaperNotFoundError(f"no arxiv paper for url {url}")
-        return await self._get_by_id(match.group(1).lower())
+        return await self._get_by_id(arxiv_id)
 
     async def get_paper_by_doi(self, doi: Doi) -> Paper:
         return await self._get_by_id(_arxiv_id_for_doi(doi))
 
     async def download_pdf(self, doi: Doi, directory: LocalPath) -> Path:
-        paper = await self.get_paper_by_doi(doi)
+        arxiv_id = _arxiv_id_for_doi(doi)
+        paper = await self._get_by_id(arxiv_id)
         path = unique_pdf_path(Path(directory), paper.citation_key)
-        return await self._download_pdf_by_id(_arxiv_id_for_doi(doi), path)
+        return await self._download_pdf_by_id(arxiv_id, path)
 
     async def get_pdf_text(self, doi: Doi) -> str:
         arxiv_id = _arxiv_id_for_doi(doi)
@@ -315,18 +325,12 @@ class ArxivSource(PaperSource):
         """
         arxiv_id = _VERSION_SUFFIX_PATTERN.sub("", _arxiv_id_for_doi(doi).lower())
         url = _HTML_URL_TEMPLATE.format(arxiv_id=arxiv_id)
-        headers = {"User-Agent": f"{_USER_AGENT} (mailto:{_random_email()})"}
-        async with httpx.AsyncClient(
-            timeout=_REQUEST_TIMEOUT_SECONDS, follow_redirects=True
-        ) as client:
-            try:
-                response = await client.get(url, headers=headers)
-            except httpx.HTTPError as exc:
-                raise PaperSourceError("arxiv html request failed") from exc
+        response = await self._get(
+            url, follow_redirects=True, context="arxiv html request"
+        )
         if response.status_code == 404:
             raise PaperSourceError(f"arxiv has no html version for paper {arxiv_id}")
-        if response.status_code != 200:
-            raise PaperSourceError(f"arxiv returned status {response.status_code}")
+        self._raise_for_status(response)
         references = await asyncio.to_thread(_extract_references, response.text)
         if not references:
             raise PaperSourceError(
@@ -335,11 +339,12 @@ class ArxivSource(PaperSource):
         return references
 
     async def get_pdf_images(self, doi: Doi, directory: LocalPath) -> list[Path]:
-        paper = await self.get_paper_by_doi(doi)
+        arxiv_id = _arxiv_id_for_doi(doi)
+        paper = await self._get_by_id(arxiv_id)
         images_dir = Path(directory)
         base = unique_image_base(images_dir, paper.citation_key)
         with TempPdf() as tmp_path:
-            await self._download_pdf_by_id(_arxiv_id_for_doi(doi), tmp_path)
+            await self._download_pdf_by_id(arxiv_id, tmp_path)
             return await asyncio.to_thread(
                 extract_pdf_images, tmp_path, images_dir, base
             )
@@ -350,7 +355,7 @@ class ArxivSource(PaperSource):
         tmp_path = path.with_name(f"{path.name}.{secrets.token_hex(6)}.part")
         complete = False
         try:
-            headers = {"User-Agent": f"{_USER_AGENT} (mailto:{_random_email()})"}
+            headers = self._headers()
             async with httpx.AsyncClient(
                 timeout=_PDF_REQUEST_TIMEOUT_SECONDS, follow_redirects=True
             ) as client:
@@ -378,7 +383,8 @@ class ArxivSource(PaperSource):
 
     async def _get_by_id(self, arxiv_id: str) -> Paper:
         base_id = _VERSION_SUFFIX_PATTERN.sub("", arxiv_id.lower())
-        data = await self._oai_request(
+        data = await self._request(
+            _OAI_BASE_URL,
             {
                 "verb": "GetRecord",
                 "identifier": f"{_OAI_IDENTIFIER_PREFIX}{base_id}",
@@ -388,38 +394,48 @@ class ArxivSource(PaperSource):
         metadata = self._oai_metadata(data, base_id)
         return self._paper_from_oai_metadata(metadata, base_id)
 
-    async def _request(self, params: dict[str, str]) -> str:
-        return await self._get(_BASE_URL, params)
-
-    async def _oai_request(self, params: dict[str, str]) -> str:
-        return await self._get(_OAI_BASE_URL, params)
-
-    async def _get(self, url: str, params: dict[str, str]) -> str:
-        headers = {"User-Agent": f"{_USER_AGENT} (mailto:{_random_email()})"}
-        async with httpx.AsyncClient(timeout=_REQUEST_TIMEOUT_SECONDS) as client:
-            try:
-                response = await client.get(url, params=params, headers=headers)
-            except httpx.HTTPError as exc:
-                raise PaperSourceError("arxiv request failed") from exc
-        if response.status_code != 200:
-            raise PaperSourceError(f"arxiv returned status {response.status_code}")
+    async def _request(self, url: str, params: dict[str, str]) -> str:
+        response = await self._get(url, params)
+        self._raise_for_status(response)
         return response.text
+
+    async def _get(
+        self,
+        url: str,
+        params: dict[str, str] | None = None,
+        *,
+        follow_redirects: bool = False,
+        context: str = "arxiv request",
+    ) -> httpx.Response:
+        async with httpx.AsyncClient(
+            timeout=_REQUEST_TIMEOUT_SECONDS, follow_redirects=follow_redirects
+        ) as client:
+            try:
+                return await client.get(url, params=params, headers=self._headers())
+            except httpx.HTTPError as exc:
+                raise PaperSourceError(f"{context} failed") from exc
+
+    @staticmethod
+    def _headers() -> dict[str, str]:
+        return {"User-Agent": f"{_USER_AGENT} (mailto:{_random_email()})"}
+
+    @staticmethod
+    def _raise_for_status(response: httpx.Response, service: str = "arxiv") -> None:
+        if response.status_code != 200:
+            raise PaperSourceError(f"{service} returned status {response.status_code}")
 
     def _oai_metadata(self, data: str, base_id: str) -> ET.Element:
         root = self._parse(data)
-        error = root.find(f"{{{_OAI_PMH_NAMESPACE}}}error")
+        error = root.find(f"{{{_OAI}}}error")
         if error is not None:
             code = error.get("code") or "unknown"
             if code == _OAI_NOT_FOUND_ERROR_CODE:
                 raise PaperNotFoundError(f"no arxiv paper for id {base_id}")
-            raise PaperSourceError(
-                f"arxiv oai error {code}: {self._element_text(error)}"
-            )
+            text = " ".join(error.text.split()) if error.text else ""
+            raise PaperSourceError(f"arxiv oai error {code}: {text}")
         path = (
-            f"{{{_OAI_PMH_NAMESPACE}}}GetRecord/"
-            f"{{{_OAI_PMH_NAMESPACE}}}record/"
-            f"{{{_OAI_PMH_NAMESPACE}}}metadata/"
-            f"{{{_OAI_ARXIV_NAMESPACE}}}arXiv"
+            f"{{{_OAI}}}GetRecord/{{{_OAI}}}record/"
+            f"{{{_OAI}}}metadata/{{{_OAI_ARXIV}}}arXiv"
         )
         metadata = root.find(path)
         if metadata is None:
@@ -433,47 +449,37 @@ class ArxivSource(PaperSource):
             raise PaperSourceError("invalid arxiv response") from exc
 
     def _entries(self, data: str) -> list[ET.Element]:
-        return self._parse(data).findall(f"{{{_ATOM_NAMESPACE}}}entry")
+        return self._parse(data).findall(f"{{{_ATOM}}}entry")
 
     def _paper_from_oai_metadata(self, metadata: ET.Element, base_id: str) -> Paper:
         record_id = self._required_text(
-            metadata, f"{{{_OAI_ARXIV_NAMESPACE}}}id"
+            metadata, f"{{{_OAI_ARXIV}}}id"
         ).lower()
         if record_id != base_id:
             raise PaperSourceError(
                 f"arxiv oai returned id {record_id} for requested {base_id}"
             )
-        doi = (
-            self._optional_text(metadata, f"{{{_OAI_ARXIV_NAMESPACE}}}doi")
-            or f"{_ARXIV_DOI_PREFIX}{base_id}"
+        return self._build_paper(
+            base_id=base_id,
+            name=self._required_text(metadata, f"{{{_OAI_ARXIV}}}title"),
+            doi=self._optional_text(metadata, f"{{{_OAI_ARXIV}}}doi"),
+            authors=self._oai_authors(metadata),
+            abstract=self._required_text(
+                metadata, f"{{{_OAI_ARXIV}}}abstract"
+            ),
+            published_at=self._parse_oai_date(
+                self._optional_text(metadata, f"{{{_OAI_ARXIV}}}created")
+            ),
         )
-        created = self._optional_text(metadata, f"{{{_OAI_ARXIV_NAMESPACE}}}created")
-        try:
-            return Paper(
-                source="arxiv",
-                name=self._required_text(metadata, f"{{{_OAI_ARXIV_NAMESPACE}}}title"),
-                url=f"https://arxiv.org/abs/{base_id}",
-                doi=doi,
-                authors=self._oai_authors(metadata),
-                publisher=_PUBLISHER,
-                abstract=self._required_text(
-                    metadata, f"{{{_OAI_ARXIV_NAMESPACE}}}abstract"
-                ),
-                published_at=self._parse_oai_date(created),
-            )
-        except ValidationError as exc:
-            raise PaperSourceError("invalid arxiv entry data") from exc
 
     def _oai_authors(self, metadata: ET.Element) -> list[str]:
         authors = []
         for author in metadata.findall(
-            f"{{{_OAI_ARXIV_NAMESPACE}}}authors/{{{_OAI_ARXIV_NAMESPACE}}}author"
+            f"{{{_OAI_ARXIV}}}authors/{{{_OAI_ARXIV}}}author"
         ):
-            keyname = self._required_text(author, f"{{{_OAI_ARXIV_NAMESPACE}}}keyname")
-            forenames = self._optional_text(
-                author, f"{{{_OAI_ARXIV_NAMESPACE}}}forenames"
-            )
-            suffix = self._optional_text(author, f"{{{_OAI_ARXIV_NAMESPACE}}}suffix")
+            keyname = self._required_text(author, f"{{{_OAI_ARXIV}}}keyname")
+            forenames = self._optional_text(author, f"{{{_OAI_ARXIV}}}forenames")
+            suffix = self._optional_text(author, f"{{{_OAI_ARXIV}}}suffix")
             authors.append(
                 " ".join(
                     part for part in (forenames, keyname, suffix) if part is not None
@@ -488,42 +494,51 @@ class ArxivSource(PaperSource):
         return datetime.fromisoformat(value).replace(tzinfo=UTC)
 
     def _paper_from_entry(self, entry: ET.Element) -> Paper:
-        entry_id = self._required_text(entry, f"{{{_ATOM_NAMESPACE}}}id")
-        match = _URL_PATTERN.fullmatch(entry_id)
-        if match is None:
+        entry_id = self._required_text(entry, f"{{{_ATOM}}}id")
+        arxiv_id = _arxiv_id_from_url(entry_id)
+        if arxiv_id is None:
             raise PaperSourceError(f"unexpected arxiv entry id {entry_id}")
-        arxiv_id = match.group(1).lower()
         base_id = _VERSION_SUFFIX_PATTERN.sub("", arxiv_id)
-        doi = self._optional_text(entry, f"{{{_ARXIV_NAMESPACE}}}doi") or (
-            f"{_ARXIV_DOI_PREFIX}{base_id}"
+        return self._build_paper(
+            base_id=base_id,
+            name=self._required_text(entry, f"{{{_ATOM}}}title"),
+            doi=self._optional_text(entry, f"{{{_ARXIV}}}doi"),
+            authors=[
+                author_name
+                for author in entry.findall(f"{{{_ATOM}}}author")
+                if (
+                    author_name := self._optional_text(
+                        author, f"{{{_ATOM}}}name"
+                    )
+                )
+            ],
+            abstract=self._required_text(entry, f"{{{_ATOM}}}summary"),
+            published_at=self._required_text(entry, f"{{{_ATOM}}}published"),
         )
+
+    def _build_paper(
+        self,
+        *,
+        base_id: str,
+        name: str,
+        doi: str | None,
+        authors: list[str],
+        abstract: str,
+        published_at: datetime | str | None,
+    ) -> Paper:
         try:
             return Paper(
                 source="arxiv",
-                name=self._required_text(entry, f"{{{_ATOM_NAMESPACE}}}title"),
+                name=name,
                 url=f"https://arxiv.org/abs/{base_id}",
-                doi=doi,
-                authors=[
-                    author_name
-                    for author in entry.findall(f"{{{_ATOM_NAMESPACE}}}author")
-                    if (
-                        author_name := self._optional_text(
-                            author, f"{{{_ATOM_NAMESPACE}}}name"
-                        )
-                    )
-                ],
+                doi=doi or f"{_ARXIV_DOI_PREFIX}{base_id}",
+                authors=authors,
                 publisher=_PUBLISHER,
-                abstract=self._required_text(entry, f"{{{_ATOM_NAMESPACE}}}summary"),
-                published_at=self._required_text(
-                    entry, f"{{{_ATOM_NAMESPACE}}}published"
-                ),
+                abstract=abstract,
+                published_at=published_at,
             )
         except ValidationError as exc:
             raise PaperSourceError("invalid arxiv entry data") from exc
-
-    @staticmethod
-    def _element_text(node: ET.Element) -> str:
-        return " ".join(node.text.split()) if node.text else ""
 
     @staticmethod
     def _required_text(node: ET.Element, path: str) -> str:

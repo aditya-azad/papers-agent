@@ -18,9 +18,10 @@ import os
 import sqlite3
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import ValidationError
 
@@ -70,6 +71,63 @@ T = TypeVar("T")
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _no_extra(value: object) -> tuple:
+    return ()
+
+
+def _decode_paper(row: object) -> Paper | None:
+    try:
+        return Paper.model_validate_json(row[0])
+    except ValidationError:
+        return None
+
+
+def _decode_urls(row: object) -> list[str] | None:
+    try:
+        urls = json.loads(row[0])
+    except ValueError:
+        return None
+    return urls if isinstance(urls, list) else None
+
+
+@dataclass(frozen=True)
+class _Table:
+    """Declarative description of one cache table.
+
+    ``keys`` are the lookup columns, ``content`` holds the payload, and
+    ``extra`` names additional payload columns filled from ``extra_of``.
+    ``encode``/``decode`` convert between the payload and its stored form.
+    """
+
+    name: str
+    keys: tuple[str, ...]
+    content: str
+    encode: Callable[[Any], Any]
+    decode: Callable[[Any], Any | None]
+    extra: tuple[str, ...] = ()
+    extra_of: Callable[[Any], tuple] = _no_extra
+
+
+_TABLES: dict[str, _Table] = {
+    "papers": _Table(
+        "papers", ("source", "cache_key"), "data",
+        lambda paper: paper.model_dump_json(), _decode_paper,
+        extra=("doi",), extra_of=lambda paper: (paper.doi,),
+    ),
+    "query_results": _Table(
+        "query_results", ("cache_key",), "paper_urls", json.dumps, _decode_urls,
+    ),
+    "text_results": _Table(
+        "text_results", ("source", "kind", "doi"), "content",
+        lambda text: text, lambda row: row[0],
+    ),
+    "pdf_results": _Table(
+        "pdf_results", ("source", "doi"), "content",
+        lambda blob: blob, lambda row: row[0],
+    ),
+}
 
 
 class SourceCache:
@@ -130,27 +188,57 @@ class SourceCache:
         return await asyncio.to_thread(task)
 
     @staticmethod
-    def _paper_from_row(row: object) -> Paper | None:
-        try:
-            return Paper.model_validate_json(row[0])
-        except ValidationError:
-            return None
+    def _where(spec: _Table) -> str:
+        return " AND ".join(f"{column} = ?" for column in spec.keys)
 
     @staticmethod
     def _touch(
-        connection: sqlite3.Connection, table: str, where: str, params: tuple
+        connection: sqlite3.Connection,
+        table: str,
+        where: str,
+        params: tuple,
     ) -> None:
         """Refresh an entry's cached_at timestamp so it counts as just touched."""
         connection.execute(
             f"UPDATE {table} SET cached_at = ? WHERE {where}", (_now(), *params)
         )
 
+    async def _get(self, table: str, key_values: tuple) -> T | None:
+        """Read one entry, refresh its timestamp, and decode its payload."""
+        spec = _TABLES[table]
+        select = f"SELECT {spec.content} FROM {spec.name} WHERE {self._where(spec)}"
+
+        def operation(connection: sqlite3.Connection) -> T | None:
+            row = connection.execute(select, key_values).fetchone()
+            if row is None:
+                return None
+            self._touch(connection, spec.name, self._where(spec), key_values)
+            connection.commit()
+            return spec.decode(row)
+
+        return await self._run(operation)
+
+    async def _put(self, table: str, key_values: tuple, value: Any) -> None:
+        spec = _TABLES[table]
+        columns = (*spec.keys, *spec.extra, spec.content, "cached_at")
+        placeholders = ", ".join("?" for _ in columns)
+
+        def operation(connection: sqlite3.Connection) -> None:
+            connection.execute(
+                f"INSERT OR REPLACE INTO {spec.name} ({', '.join(columns)})"
+                f" VALUES ({placeholders})",
+                (*key_values, *spec.extra_of(value), spec.encode(value), _now()),
+            )
+            connection.commit()
+
+        await self._run(operation)
+
     async def evict_stale(self) -> None:
         """Delete every cached item whose last touch is older than the TTL."""
 
         def operation(connection: sqlite3.Connection) -> None:
             cutoff = (datetime.now(UTC) - _CACHE_TTL).isoformat()
-            for table in ("papers", "query_results", "text_results", "pdf_results"):
+            for table in _TABLES:
                 connection.execute(
                     f"DELETE FROM {table} WHERE cached_at < ?", (cutoff,)
                 )
@@ -159,18 +247,7 @@ class SourceCache:
         await self._run(operation)
 
     async def get_paper_by_url(self, source: str, url: str) -> Paper | None:
-        def operation(connection: sqlite3.Connection) -> Paper | None:
-            row = connection.execute(
-                "SELECT data FROM papers WHERE source = ? AND cache_key = ?",
-                (source, url),
-            ).fetchone()
-            if row is None:
-                return None
-            self._touch(connection, "papers", "source = ? AND cache_key = ?", (source, url))
-            connection.commit()
-            return self._paper_from_row(row)
-
-        return await self._run(operation)
+        return await self._get("papers", (source, url))
 
     async def get_paper_by_doi(self, source: str, doi: str) -> Paper | None:
         def operation(connection: sqlite3.Connection) -> Paper | None:
@@ -182,41 +259,32 @@ class SourceCache:
             if row is None:
                 return None
             self._touch(
-                connection, "papers", "source = ? AND cache_key = ?", (source, row[0])
+                connection, "papers", self._where(_TABLES["papers"]), (source, row[0])
             )
             connection.commit()
-            return self._paper_from_row((row[1],))
+            return _decode_paper((row[1],))
 
         return await self._run(operation)
 
     async def put_paper(self, source: str, paper: Paper) -> None:
-        data = paper.model_dump_json()
+        await self._put("papers", (source, paper.url), paper)
 
-        def operation(connection: sqlite3.Connection) -> None:
-            connection.execute(
-                "INSERT OR REPLACE INTO papers (source, cache_key, doi, data,"
-                " cached_at) VALUES (?, ?, ?, ?, ?)",
-                (source, paper.url, paper.doi, data, _now()),
-            )
-            connection.commit()
+    async def get_papers_by_urls(
+        self, source: str, urls: list[str]
+    ) -> dict[str, Paper]:
+        spec = _TABLES["papers"]
+        select = f"SELECT {spec.content} FROM {spec.name} WHERE {self._where(spec)}"
+        where = self._where(spec)
 
-        await self._run(operation)
-
-    async def get_papers_by_urls(self, source: str, urls: list[str]) -> dict[str, Paper]:
         def operation(connection: sqlite3.Connection) -> dict[str, Paper]:
             papers: dict[str, Paper] = {}
             for url in urls:
-                row = connection.execute(
-                    "SELECT data FROM papers WHERE source = ? AND cache_key = ?",
-                    (source, url),
-                ).fetchone()
+                row = connection.execute(select, (source, url)).fetchone()
                 if row is None:
                     continue
-                paper = self._paper_from_row(row)
+                paper = spec.decode(row)
                 if paper is not None:
-                    self._touch(
-                        connection, "papers", "source = ? AND cache_key = ?", (source, url)
-                    )
+                    self._touch(connection, spec.name, where, (source, url))
                     papers[url] = paper
             if papers:
                 connection.commit()
@@ -225,92 +293,19 @@ class SourceCache:
         return await self._run(operation) or {}
 
     async def get_query_result(self, cache_key: str) -> list[str] | None:
-        def operation(connection: sqlite3.Connection) -> list[str] | None:
-            row = connection.execute(
-                "SELECT paper_urls FROM query_results WHERE cache_key = ?",
-                (cache_key,),
-            ).fetchone()
-            if row is None:
-                return None
-            self._touch(
-                connection, "query_results", "cache_key = ?", (cache_key,)
-            )
-            connection.commit()
-            try:
-                urls = json.loads(row[0])
-            except ValueError:
-                return None
-            return urls if isinstance(urls, list) else None
-
-        return await self._run(operation)
+        return await self._get("query_results", (cache_key,))
 
     async def put_query_result(self, cache_key: str, paper_urls: list[str]) -> None:
-        encoded = json.dumps(paper_urls)
-
-        def operation(connection: sqlite3.Connection) -> None:
-            connection.execute(
-                "INSERT OR REPLACE INTO query_results (cache_key, paper_urls,"
-                " cached_at) VALUES (?, ?, ?)",
-                (cache_key, encoded, _now()),
-            )
-            connection.commit()
-
-        await self._run(operation)
+        await self._put("query_results", (cache_key,), paper_urls)
 
     async def get_text(self, source: str, kind: str, doi: str) -> str | None:
-        def operation(connection: sqlite3.Connection) -> str | None:
-            row = connection.execute(
-                "SELECT content FROM text_results WHERE source = ? AND kind = ?"
-                " AND doi = ?",
-                (source, kind, doi),
-            ).fetchone()
-            if row is None:
-                return None
-            self._touch(
-                connection,
-                "text_results",
-                "source = ? AND kind = ? AND doi = ?",
-                (source, kind, doi),
-            )
-            connection.commit()
-            return row[0]
-
-        return await self._run(operation)
+        return await self._get("text_results", (source, kind, doi))
 
     async def put_text(self, source: str, kind: str, doi: str, content: str) -> None:
-        def operation(connection: sqlite3.Connection) -> None:
-            connection.execute(
-                "INSERT OR REPLACE INTO text_results (source, kind, doi, content,"
-                " cached_at) VALUES (?, ?, ?, ?, ?)",
-                (source, kind, doi, content, _now()),
-            )
-            connection.commit()
-
-        await self._run(operation)
+        await self._put("text_results", (source, kind, doi), content)
 
     async def get_pdf(self, source: str, doi: str) -> bytes | None:
-        def operation(connection: sqlite3.Connection) -> bytes | None:
-            row = connection.execute(
-                "SELECT content FROM pdf_results WHERE source = ? AND doi = ?",
-                (source, doi),
-            ).fetchone()
-            if row is None:
-                return None
-            self._touch(
-                connection, "pdf_results", "source = ? AND doi = ?", (source, doi)
-            )
-            connection.commit()
-            return row[0]
-
-        return await self._run(operation)
+        return await self._get("pdf_results", (source, doi))
 
     async def put_pdf(self, source: str, doi: str, content: bytes) -> None:
-        def operation(connection: sqlite3.Connection) -> None:
-            connection.execute(
-                "INSERT OR REPLACE INTO pdf_results (source, doi, content,"
-                " cached_at) VALUES (?, ?, ?, ?)",
-                (source, doi, content, _now()),
-            )
-            connection.commit()
-
-        await self._run(operation)
+        await self._put("pdf_results", (source, doi), content)
