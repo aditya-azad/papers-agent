@@ -1,5 +1,6 @@
 
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from papers_agent.errors import PaperNotFoundError, PaperSourceError
@@ -20,6 +21,9 @@ from papers_agent.types import (
 )
 
 
+_EPOCH = datetime.min.replace(tzinfo=UTC)
+
+
 class ChainedSource(PaperSource):
     source = "arxiv"
 
@@ -36,19 +40,22 @@ class ChainedSource(PaperSource):
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
         self._prepare()
-        results: list[Paper] = []
-        seen: set[str] = set()
+        candidates: list[Paper] = []
         for source in self._sources:
             papers = await source.search(keyword, limit)
             if papers is None:
                 continue
-            for paper in papers:
-                if paper.url not in seen:
-                    seen.add(paper.url)
-                    results.append(paper)
-            if len(results) >= limit:
-                break
-        return results[:limit]
+            candidates.extend(papers)
+        seen: set[str] = set()
+        unique: list[Paper] = []
+        for paper in candidates:
+            if paper.url not in seen:
+                seen.add(paper.url)
+                unique.append(paper)
+        unique.sort(
+            key=lambda paper: paper.published_at or _EPOCH, reverse=True
+        )
+        return unique[:limit]
 
     async def semantic_search_ids(self, query: NonEmptyStr, limit: int) -> list[str]:
         self._prepare()
