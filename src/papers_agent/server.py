@@ -148,7 +148,7 @@ async def get_paper_metadata_by_doi(
 
 
 @mcp.tool()
-async def get_paper_metadata_references_by_doi(
+async def get_paper_references_by_doi(
     doi: Doi,
 ) -> list[str]:
     """Fetch the bibliography of the paper with the given doi as raw reference strings."""
@@ -156,7 +156,7 @@ async def get_paper_metadata_references_by_doi(
 
 
 @mcp.tool()
-async def get_paper_metadata_references_by_url(
+async def get_paper_references_by_url(
     url: Url,
 ) -> list[str]:
     """Fetch the bibliography of the paper at the given url as raw reference strings; the doi is inferred from the url."""

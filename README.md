@@ -287,8 +287,8 @@ Most tools come in `..._by_url` / `..._by_doi` pairs that do the same job and di
 | `get_papers_in_date_range` | List papers from a source published within a date range. |
 | `get_paper_metadata_by_url` | Fetch the metadata of a single paper by url. |
 | `get_paper_metadata_by_doi` | Fetch the metadata of a single paper by doi. |
-| `get_paper_metadata_references_by_doi` | Fetch the bibliography of a paper as raw reference strings. |
-| `get_paper_metadata_references_by_url` | Fetch the bibliography of a paper as raw reference strings. |
+| `get_paper_references_by_doi` | Fetch the bibliography of a paper as raw reference strings. |
+| `get_paper_references_by_url` | Fetch the bibliography of a paper as raw reference strings. |
 | `get_paper_pdf_text_by_doi` | Return the full text extracted from a paper's pdf. |
 | `get_paper_pdf_text_by_url` | Return the full text extracted from a paper's pdf. |
 | `get_paper_pdf_images_by_doi` | Extract a paper's pdf images into a directory and return their file paths, named `<doi>_image_<number>.png`. |
