@@ -48,9 +48,9 @@ mcp = MCPServer(
         "registered paper sources (currently arXiv). Prefer "
         "semantic_search for natural-language topic descriptions "
         "(arXiv uses alphaXiv embeddings); use keyword_search for "
-        "keyword queries. Queries are answered from a local arxiv "
-        "metadata database when it covers them and fall back to the "
-        "live arxiv api otherwise (backup_status reports its state). "
+        "keyword queries. Queries go to a local arxiv metadata database "
+        "and the live arxiv api together, and their answers are merged "
+        "(backup_status reports the local database's state). "
         "Tools taking a url or doi infer the source from the identifier."
     ),
     middleware=[_evict_stale_before_tool_call],

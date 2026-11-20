@@ -262,14 +262,14 @@ The project is a small, layered Python package (`src/papers_agent/`, ~2,500 line
 
 1. **MCP tools** (`server.py`) — one function per tool from the table above, plus `get_sources` and `backup_status`. When a tool receives a url or doi, it picks the right source automatically; the agent never has to.
 2. **Caching** (`cache.py`, `cached.py`) — every source is wrapped in a cache that stores lookups in a small sqlite database (`~/.papers-agent-cache/`) for three days. Repeated questions are answered instantly, and stale entries are evicted before every tool call.
-3. **Sources** (`sources/`) — this is where the actual paper knowledge lives, behind one shared abstraction (`PaperSource` in `types.py`). Every source is a composite: it holds a list of sub-sources and its default method implementations try them in order — merging search results, filling lookup gaps and falling back on errors — so composition is part of the source architecture, not a source of its own:
+3. **Sources** (`sources/`) — this is where the actual paper knowledge lives, behind one shared abstraction (`PaperSource` in `types.py`). Every source is a composite: it holds a list of sub-sources and its default method implementations query all of them together and merge their answers — sub-sources that error out simply don't contribute to the results — so composition is part of the source architecture, not a source of its own:
    - `ArxivBackupSource` — the local arXiv metadata database from [The arXiv metadata database](#the-arxiv-metadata-database), for fast, unlimited search and lookups.
    - `ArxivSource` — the live arXiv API (and alphaXiv for semantic search), used when the local database is missing or doesn't have the paper.
-   - The registered `arxiv` source composes the two, trying the local database first and falling back to the live API, so tools work with or without the multi-gigabyte download.
+   - The registered `arxiv` source composes the two, querying the local database and the live API together and merging whatever each answers, so tools work with or without the multi-gigabyte download.
 4. **PDF handling** (`pdf.py`) — downloads a paper's pdf to a temporary file and uses PyMuPDF to pull out plain text and images. `citation_key.py` turns a paper into the short identifier used to name those files and cite them.
 5. **Plumbing** (`config.py` reads `~/.config/papers-agent/config.toml`; `errors.py` and `types.py` hold the shared error and paper types; `sources/arxiv_index.py` builds the full-text, pub-date and doi indexes described under [Indexing](#indexing); `sources/kaggle_import.py` is the importer CLI).
 
-A typical tool call travels the whole stack: the agent asks for a paper by url → `server.py` recognises the arXiv link (`sources/arxiv_paper.py`) → the cached composite source checks the three-day cache, then the local database, then the live API → the pdf is downloaded and extracted only when text or images were asked for.
+A typical tool call travels the whole stack: the agent asks for a paper by url → `server.py` recognises the arXiv link (`sources/arxiv_paper.py`) → the cached composite source checks the three-day cache, then queries the local database and the live API together and merges their answers → the pdf is downloaded and extracted only when text or images were asked for.
 
 ## More publication sources
 
