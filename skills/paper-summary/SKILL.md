@@ -13,7 +13,7 @@ interesting content is the delta over the base, not the field-level background.
 
 1. **Get the full text.** Use the `papers` MCP server when available:
    - `papers_get_paper_metadata_by_url` with the arXiv URL for the metadata.
-   - `papers_get_paper_pdf_text_by_url` for the full text (needed for loss equations, training details, limitations).
+   - `papers_get_paper_text_by_url` for the full text (needed for loss equations, training details, limitations).
    - Fallback: fetch `https://arxiv.org/abs/<id>` for metadata and `https://arxiv.org/html/<id>` for full text.
    - Never summarize from the abstract alone unless the user explicitly asks for a shallow pass — losses, training procedure, and limitations live in the body and appendix.
 2. **Extract** every item in the section checklist below. Method sections and

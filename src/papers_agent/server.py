@@ -164,7 +164,7 @@ async def get_paper_references_by_url(
 
 
 @mcp.tool()
-async def get_paper_pdf_text_by_url(
+async def get_paper_text_by_url(
     url: Url,
 ) -> str:
     """Return the full text extracted from the pdf of the paper at the given url (e.g. an arxiv abstract or pdf page); the doi is inferred from the url."""
@@ -172,7 +172,7 @@ async def get_paper_pdf_text_by_url(
 
 
 @mcp.tool()
-async def get_paper_pdf_text_by_doi(
+async def get_paper_text_by_doi(
     doi: Doi,
 ) -> str:
     """Return the full text extracted from the pdf of the paper with the given doi."""
@@ -193,7 +193,7 @@ def backup_status() -> dict[str, str]:
 
 
 @mcp.tool()
-async def get_paper_pdf_images_by_doi(
+async def get_paper_images_by_doi(
     doi: Doi,
     directory: LocalPath,
 ) -> list[str]:
@@ -203,7 +203,7 @@ async def get_paper_pdf_images_by_doi(
 
 
 @mcp.tool()
-async def get_paper_pdf_images_by_url(
+async def get_paper_images_by_url(
     url: Url,
     directory: LocalPath,
 ) -> list[str]:
