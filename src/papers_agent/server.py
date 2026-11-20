@@ -11,8 +11,8 @@ from pydantic import Field
 from papers_agent.cache import SourceCache
 from papers_agent.cached import CachedSource
 from papers_agent.errors import PaperSourceError
-from papers_agent.sources.arxiv import ArxivSource
-from papers_agent.sources.arxiv_backup import ArxivBackupSource
+from papers_agent.sources.arxiv.source import ArxivSource
+from papers_agent.sources.arxiv_backup.source import ArxivBackupSource
 from papers_agent.types import (
     Doi,
     LocalPath,

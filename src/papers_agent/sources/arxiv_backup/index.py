@@ -149,7 +149,7 @@ class Indexer:
             [
                 sys.executable,
                 "-m",
-                "papers_agent.sources.arxiv_index",
+                "papers_agent.sources.arxiv_backup.index",
                 str(self._db_path),
             ],
             stdin=subprocess.DEVNULL,
@@ -297,7 +297,7 @@ def main() -> None:
     if len(sys.argv) == 2:
         Indexer(Path(sys.argv[1])).run_build()
         return
-    raise SystemExit("usage: python -m papers_agent.sources.arxiv_index DB")
+    raise SystemExit("usage: python -m papers_agent.sources.arxiv_backup.index DB")
 
 
 if __name__ == "__main__":

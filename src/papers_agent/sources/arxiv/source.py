@@ -19,7 +19,7 @@ from papers_agent.errors import (
     PaperSourceError,
 )
 from papers_agent.pdf import TempPdf, extract_pdf_images, extract_pdf_text
-from papers_agent.sources.arxiv_paper import (
+from papers_agent.sources.arxiv.paper import (
     ARXIV_DOI_PREFIX,
     ARXIV_ID_PATTERN,
     arxiv_id_for_doi,

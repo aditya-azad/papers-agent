@@ -6,17 +6,17 @@ from pathlib import Path
 
 from papers_agent.config import backup_db
 from papers_agent.errors import PaperSourceError
-from papers_agent.sources.arxiv_index import (
-    Indexer,
-    _connect,
-    _published_at,
-)
-from papers_agent.sources.arxiv_paper import (
+from papers_agent.sources.arxiv.paper import (
     ARXIV_DOI_PREFIX,
     arxiv_id_from_doi,
     arxiv_id_from_url,
     doi_for_arxiv_url,
     paper_from_arxiv_fields,
+)
+from papers_agent.sources.arxiv_backup.index import (
+    Indexer,
+    _connect,
+    _published_at,
 )
 from papers_agent.types import (
     Doi,
