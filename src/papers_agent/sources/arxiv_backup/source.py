@@ -31,12 +31,9 @@ _CHUNK = 100
 
 _PAPER_ROW_COLUMNS = "id, title, authors_parsed, versions, update_date, doi, abstract"
 _PAPER_ROW_COLUMNS_PREFIXED = (
-    "p.id, p.title, p.authors_parsed, p.versions,"
-    " p.update_date, p.doi, p.abstract"
+    "p.id, p.title, p.authors_parsed, p.versions, p.update_date, p.doi, p.abstract"
 )
-_PAPER_ROW_QUERY = (
-    f"SELECT {_PAPER_ROW_COLUMNS} FROM papers WHERE id = ?"
-)
+_PAPER_ROW_QUERY = f"SELECT {_PAPER_ROW_COLUMNS} FROM papers WHERE id = ?"
 
 
 def _authors_from_json(value: str | None) -> list[str]:
@@ -60,14 +57,11 @@ def _authors_from_json(value: str | None) -> list[str]:
 
 def _fts_match_query(keyword: str) -> str:
     tokens = keyword.split()
-    return " ".join(
-        f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens
-    )
+    return " ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
 
 
 def _paper_from_row(row: tuple) -> Paper | None:
-    (arxiv_id, title, authors_parsed, versions_json, update_date, doi,
-     abstract) = row
+    (arxiv_id, title, authors_parsed, versions_json, update_date, doi, abstract) = row
     try:
         return paper_from_arxiv_fields(
             base_id=arxiv_id.lower(),
@@ -108,9 +102,7 @@ class ArxivBackupSource(PaperSource):
     async def get_papers_in_date_range(
         self, start: UTCDatetime, end: UTCDatetime, limit: int
     ) -> list[Paper] | None:
-        return await asyncio.to_thread(
-            self._date_range_sync, start, end, limit
-        )
+        return await asyncio.to_thread(self._date_range_sync, start, end, limit)
 
     async def get_paper_by_url(self, url: Url) -> Paper | None:
         arxiv_id = arxiv_id_from_url(url)
@@ -137,7 +129,7 @@ class ArxivBackupSource(PaperSource):
     def _papers_by_ids_sync(self, arxiv_ids: list[str]) -> dict[str, Paper]:
         papers: dict[str, Paper] = {}
         for start in range(0, len(arxiv_ids), _CHUNK):
-            chunk = arxiv_ids[start:start + _CHUNK]
+            chunk = arxiv_ids[start : start + _CHUNK]
             placeholders = ",".join("?" * len(chunk))
             with _connect(self._db_path) as conn:
                 if conn is None:

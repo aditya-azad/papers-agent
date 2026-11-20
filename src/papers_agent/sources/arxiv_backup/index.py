@@ -88,7 +88,7 @@ def _published_at(
     if isinstance(created, str) and created:
         try:
             return parsedate_to_datetime(created).astimezone(UTC)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             pass
     if update_date:
         try:
@@ -127,9 +127,7 @@ class Indexer:
             if conn is None:
                 return result
             try:
-                meta = dict(
-                    conn.execute("SELECT key, value FROM meta").fetchall()
-                )
+                meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
             except sqlite3.Error:
                 return result
         for key in ("indexed_at", "cutoff"):
@@ -179,18 +177,10 @@ class Indexer:
             if conn is None:
                 return False
             try:
-                papers = conn.execute(
-                    "SELECT count(*) FROM papers"
-                ).fetchone()[0]
-                fts = conn.execute(
-                    "SELECT count(*) FROM paper_fts"
-                ).fetchone()[0]
-                dates = conn.execute(
-                    "SELECT count(*) FROM paper_date"
-                ).fetchone()[0]
-                dois = conn.execute(
-                    "SELECT count(*) FROM paper_doi"
-                ).fetchone()[0]
+                papers = conn.execute("SELECT count(*) FROM papers").fetchone()[0]
+                fts = conn.execute("SELECT count(*) FROM paper_fts").fetchone()[0]
+                dates = conn.execute("SELECT count(*) FROM paper_date").fetchone()[0]
+                dois = conn.execute("SELECT count(*) FROM paper_doi").fetchone()[0]
             except sqlite3.Error:
                 return False
         return papers > 0 and fts == papers and dates <= papers and dois <= papers
@@ -246,9 +236,7 @@ class Indexer:
         except OSError:
             pass
 
-    def _rebuild_derived_rows(
-        self, conn: sqlite3.Connection, select_sql: str
-    ) -> None:
+    def _rebuild_derived_rows(self, conn: sqlite3.Connection, select_sql: str) -> None:
         rows = conn.execute(select_sql)
         pending_dates: list[tuple[str, str]] = []
         pending_dois: list[tuple[str, str]] = []

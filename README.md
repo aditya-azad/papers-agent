@@ -277,7 +277,7 @@ ln -s "$PAPERS_AGENT_DIR/skills/paper-summary" ~/.agents/skills/paper-summary
 
 ## Available tools
 
-Most tools come in `..._by_url` / `..._by_doi` pairs that do the same job and differ only in how the paper is identified. For the `url` variants the source and doi are inferred automatically, so you can pass an arXiv abstract or pdf page link straight from a search result. A paper's *citation key* is the short identifier used to cite it (for example `vaswani2017attention`).
+Most tools come in `..._by_url` / `..._by_doi` pairs that do the same job and differ only in how the paper is identified. For the `url` variants the source and doi are inferred automatically, so you can pass an arXiv abstract or pdf page link straight from a search result.
 
 | Tool | Description |
 |---|---|
@@ -289,12 +289,10 @@ Most tools come in `..._by_url` / `..._by_doi` pairs that do the same job and di
 | `get_paper_metadata_by_doi` | Fetch the metadata of a single paper by doi. |
 | `get_paper_metadata_references_by_doi` | Fetch the bibliography of a paper as raw reference strings. |
 | `get_paper_metadata_references_by_url` | Fetch the bibliography of a paper as raw reference strings. |
-| `get_paper_metadata_citation_key_by_url` | Return the citation key of a paper. |
-| `get_paper_metadata_citation_key_by_doi` | Return the citation key of a paper. |
 | `get_paper_pdf_text_by_doi` | Return the full text extracted from a paper's pdf. |
 | `get_paper_pdf_text_by_url` | Return the full text extracted from a paper's pdf. |
-| `get_paper_pdf_images_by_doi` | Extract a paper's pdf images into a directory and return their file paths, named `<citation key>_image_<number>.png`. |
-| `get_paper_pdf_images_by_url` | Extract a paper's pdf images into a directory and return their file paths, named `<citation key>_image_<number>.png`. |
+| `get_paper_pdf_images_by_doi` | Extract a paper's pdf images into a directory and return their file paths, named `<doi>_image_<number>.png`. |
+| `get_paper_pdf_images_by_url` | Extract a paper's pdf images into a directory and return their file paths, named `<doi>_image_<number>.png`. |
 
 ## Architecture
 
@@ -306,7 +304,7 @@ The project is a small, layered Python package (`src/papers_agent/`, ~2,500 line
    - `ArxivBackupSource` — the local arXiv metadata database from [The arXiv metadata database](#the-arxiv-metadata-database), for fast, unlimited search and lookups via its full-text-search, pub-date and doi indexes. When the database is missing or a date range reaches past its snapshot cutoff, it abstains (returns nothing) and lets the live api fill the gap. It also answers batch lookups by arXiv id, which is how semantic-search results get their metadata.
    - `ArxivSource` — the live services behind arXiv, used when the local database is missing or doesn't have the paper: the Atom api for search, date ranges and id batches, OAI-PMH `GetRecord` for single-paper metadata, arXiv's html rendering for bibliographies, and arxiv.org for pdf downloads. Semantic search goes through [alphaXiv](https://alphaxiv.org) embeddings, which only return arXiv ids — the composite then hydrates those ids into papers through both sub-sources.
    - The registered `arxiv` source composes the two, so tools work with or without the multi-gigabyte download: searches draw on both answers, while lookups hit the local database first and fall back to the live api.
-4. **PDF handling** (`pdf.py`) — downloads a paper's pdf and uses PyMuPDF to pull out plain text and images. `citation_key.py` turns a paper into the short identifier used to name those files and cite them; the cached source caches the pdf bytes and writes them out under collision-safe names when text or images are requested.
+4. **PDF handling** (`pdf.py`) — downloads a paper's pdf and uses PyMuPDF to pull out plain text and images. The cached source caches the pdf bytes and writes the pdf and its images out under doi-based names when text or images are requested.
 5. **Plumbing** (`config.py` reads `~/.config/papers-agent/config.toml`; `errors.py` and `types.py` hold the shared error and paper types; `sources/arxiv_backup/index.py` builds the full-text, pub-date and doi indexes described under [Indexing](#indexing); `sources/arxiv_backup/kaggle_import.py` is the importer CLI).
 
 A typical tool call travels the whole stack: the agent asks for a paper by url → `server.py` recognises the arXiv link (`sources/arxiv/paper.py`) → the cached composite source checks the three-day cache, then asks the local database first and falls back to the live api (or asks both, for searches) → the pdf is downloaded — and kept in the cache — only when text or images were asked for.

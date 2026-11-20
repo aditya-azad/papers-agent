@@ -1,4 +1,3 @@
-
 import asyncio
 import hashlib
 import json
@@ -91,20 +90,34 @@ class _Table:
 
 
 _PAPERS = _Table(
-    "papers", ("source", "cache_key"), "data",
-    lambda paper: paper.model_dump_json(), _decode_paper,
-    extra=("doi",), extra_of=lambda paper: (paper.doi,),
+    "papers",
+    ("source", "cache_key"),
+    "data",
+    lambda paper: paper.model_dump_json(),
+    _decode_paper,
+    extra=("doi",),
+    extra_of=lambda paper: (paper.doi,),
 )
 _QUERY_RESULTS = _Table(
-    "query_results", ("cache_key",), "paper_urls", json.dumps, _decode_urls,
+    "query_results",
+    ("cache_key",),
+    "paper_urls",
+    json.dumps,
+    _decode_urls,
 )
 _TEXT_RESULTS = _Table(
-    "text_results", ("source", "kind", "doi"), "content",
-    lambda text: text, lambda row: row[0],
+    "text_results",
+    ("source", "kind", "doi"),
+    "content",
+    lambda text: text,
+    lambda row: row[0],
 )
 _PDF_RESULTS = _Table(
-    "pdf_results", ("source", "doi"), "content",
-    lambda blob: blob, lambda row: row[0],
+    "pdf_results",
+    ("source", "doi"),
+    "content",
+    lambda blob: blob,
+    lambda row: row[0],
 )
 
 
@@ -144,7 +157,7 @@ class SourceCache:
             else:
                 connection.executescript(_SCHEMA)
             connection.commit()
-        except (OSError, sqlite3.Error):
+        except OSError, sqlite3.Error:
             return None
         self._connection = connection
         return connection

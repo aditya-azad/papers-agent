@@ -31,7 +31,5 @@ def backup_db() -> Path:
         raise ConfigError(f"config file {path} must have an [{_SECTION}] section")
     value = section.get("backup_db")
     if not isinstance(value, str) or not value:
-        raise ConfigError(
-            f"config file {path} must set {_SECTION}.backup_db to a path"
-        )
+        raise ConfigError(f"config file {path} must set {_SECTION}.backup_db to a path")
     return Path(value).expanduser()

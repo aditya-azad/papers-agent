@@ -1,5 +1,5 @@
-
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -7,6 +7,11 @@ import pymupdf
 from pymupdf.mupdf import FzErrorBase
 
 from papers_agent.errors import PaperSourceError
+from papers_agent.types import Doi
+
+
+def doi_file_base(doi: Doi) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", doi)
 
 
 class TempPdf:

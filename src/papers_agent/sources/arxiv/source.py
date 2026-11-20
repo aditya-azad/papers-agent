@@ -10,15 +10,16 @@ from pathlib import Path
 import httpx
 from defusedxml import ElementTree as DefusedElementTree
 
-from papers_agent.citation_key import (
-    unique_image_base,
-    unique_pdf_path,
-)
 from papers_agent.errors import (
     PaperNotFoundError,
     PaperSourceError,
 )
-from papers_agent.pdf import TempPdf, extract_pdf_images, extract_pdf_text
+from papers_agent.pdf import (
+    TempPdf,
+    doi_file_base,
+    extract_pdf_images,
+    extract_pdf_text,
+)
 from papers_agent.sources.arxiv.paper import (
     ARXIV_DOI_PREFIX,
     ARXIV_ID_PATTERN,
@@ -157,7 +158,7 @@ class ArxivSource(PaperSource):
                 "max_results": str(limit),
                 "sortBy": "relevance",
                 "sortOrder": "descending",
-            }
+            },
         )
         return [self._paper_from_entry(entry) for entry in self._entries(data)]
 
@@ -197,7 +198,7 @@ class ArxivSource(PaperSource):
             {
                 "id_list": ",".join(arxiv_ids),
                 "max_results": str(len(arxiv_ids)),
-            }
+            },
         )
         papers: dict[str, Paper] = {}
         for entry in self._entries(data):
@@ -223,7 +224,7 @@ class ArxivSource(PaperSource):
                 "max_results": str(limit),
                 "sortBy": "submittedDate",
                 "sortOrder": "descending",
-            }
+            },
         )
         return [self._paper_from_entry(entry) for entry in self._entries(data)]
 
@@ -241,8 +242,7 @@ class ArxivSource(PaperSource):
 
     async def download_pdf(self, doi: Doi, directory: LocalPath) -> Path:
         arxiv_id = arxiv_id_for_doi(doi)
-        paper = await self._get_by_id(arxiv_id)
-        path = unique_pdf_path(Path(directory), paper.citation_key)
+        path = Path(directory) / f"{doi_file_base(doi)}.pdf"
         return await self._download_pdf_by_id(arxiv_id, path)
 
     async def get_pdf_text(self, doi: Doi) -> str:
@@ -257,7 +257,9 @@ class ArxivSource(PaperSource):
         if response.status_code == 404:
             raise PaperSourceError(f"arxiv has no html version for paper {arxiv_id}")
         self._raise_for_status(response)
-        references = await asyncio.to_thread(_BibliographyExtractor().extract, response.text)
+        references = await asyncio.to_thread(
+            _BibliographyExtractor().extract, response.text
+        )
         if not references:
             raise PaperSourceError(
                 f"no bibliography found in the arxiv html version of {arxiv_id}"
@@ -265,11 +267,12 @@ class ArxivSource(PaperSource):
         return references
 
     async def get_pdf_images(self, doi: Doi, directory: LocalPath) -> list[Path]:
-        paper = await self._get_by_id(arxiv_id_for_doi(doi))
         images_dir = Path(directory)
-        base = unique_image_base(images_dir, paper.citation_key)
         return await self._with_pdf(
-            doi, lambda tmp_path: extract_pdf_images(tmp_path, images_dir, base)
+            doi,
+            lambda tmp_path: extract_pdf_images(
+                tmp_path, images_dir, doi_file_base(doi)
+            ),
         )
 
     async def _with_pdf[T](self, doi: Doi, extract: Callable[[Path], T]) -> T:
@@ -317,7 +320,7 @@ class ArxivSource(PaperSource):
                 "verb": "GetRecord",
                 "identifier": f"{_OAI_IDENTIFIER_PREFIX}{base_id}",
                 "metadataPrefix": _OAI_METADATA_PREFIX,
-            }
+            },
         )
         metadata = self._oai_metadata(data, base_id)
         return self._paper_from_oai_metadata(metadata, base_id)
@@ -338,7 +341,10 @@ class ArxivSource(PaperSource):
                 return response
             retry_after = _retry_after_seconds(response.headers.get("Retry-After"))
             wait = retry_after if retry_after is not None else float(attempt)
-            if attempt == _ALPHAXIV_MAX_ATTEMPTS or wait > _ALPHAXIV_MAX_RETRY_WAIT_SECONDS:
+            if (
+                attempt == _ALPHAXIV_MAX_ATTEMPTS
+                or wait > _ALPHAXIV_MAX_RETRY_WAIT_SECONDS
+            ):
                 break
             await asyncio.sleep(wait)
         raise PaperSourceError(
@@ -404,9 +410,7 @@ class ArxivSource(PaperSource):
         return self._parse(data).findall(f"{{{_ATOM}}}entry")
 
     def _paper_from_oai_metadata(self, metadata: ET.Element, base_id: str) -> Paper:
-        record_id = self._required_text(
-            metadata, f"{{{_OAI_ARXIV}}}id"
-        ).lower()
+        record_id = self._required_text(metadata, f"{{{_OAI_ARXIV}}}id").lower()
         if record_id != base_id:
             raise PaperSourceError(
                 f"arxiv oai returned id {record_id} for requested {base_id}"
@@ -416,9 +420,7 @@ class ArxivSource(PaperSource):
             name=self._required_text(metadata, f"{{{_OAI_ARXIV}}}title"),
             doi=self._optional_text(metadata, f"{{{_OAI_ARXIV}}}doi"),
             authors=self._oai_authors(metadata),
-            abstract=self._required_text(
-                metadata, f"{{{_OAI_ARXIV}}}abstract"
-            ),
+            abstract=self._required_text(metadata, f"{{{_OAI_ARXIV}}}abstract"),
             published_at=self._parse_oai_date(
                 self._optional_text(metadata, f"{{{_OAI_ARXIV}}}created")
             ),
@@ -458,11 +460,7 @@ class ArxivSource(PaperSource):
             authors=[
                 author_name
                 for author in entry.findall(f"{{{_ATOM}}}author")
-                if (
-                    author_name := self._optional_text(
-                        author, f"{{{_ATOM}}}name"
-                    )
-                )
+                if (author_name := self._optional_text(author, f"{{{_ATOM}}}name"))
             ],
             abstract=self._required_text(entry, f"{{{_ATOM}}}summary"),
             published_at=self._required_text(entry, f"{{{_ATOM}}}published"),

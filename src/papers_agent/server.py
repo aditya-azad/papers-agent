@@ -31,9 +31,7 @@ _cache = SourceCache()
 
 async def _evict_stale_before_tool_call(
     ctx: ServerRequestContext[Any, Any],
-    call_next: Callable[
-        [ServerRequestContext[Any, Any]], Awaitable[HandlerResult]
-    ],
+    call_next: Callable[[ServerRequestContext[Any, Any]], Awaitable[HandlerResult]],
 ) -> HandlerResult:
     """Evict cache entries untouched for 3+ days before every tool run."""
     if ctx.method == "tools/call":
@@ -166,22 +164,6 @@ async def get_paper_metadata_references_by_url(
 
 
 @mcp.tool()
-async def get_paper_metadata_citation_key_by_url(
-    url: Url,
-) -> str:
-    """Return the citation key (authorShortTitleYear) of the paper with the given url."""
-    return await _run(_source_for_url(url), lambda s: s.citation_key_for_url(url))
-
-
-@mcp.tool()
-async def get_paper_metadata_citation_key_by_doi(
-    doi: Doi,
-) -> str:
-    """Return the citation key (authorShortTitleYear) of the paper with the given doi."""
-    return await _run(_source_for_doi(doi), lambda s: s.citation_key(doi))
-
-
-@mcp.tool()
 async def get_paper_pdf_text_by_url(
     url: Url,
 ) -> str:
@@ -215,7 +197,7 @@ async def get_paper_pdf_images_by_doi(
     doi: Doi,
     directory: LocalPath,
 ) -> list[str]:
-    """Extract the images of the given paper's pdf into the given directory and return their file paths; each image is named <citation key>_image_<number>."""
+    """Extract the images of the given paper's pdf into the given directory and return their file paths; each image is named <doi>_image_<number>."""
     paths = await _run(_source_for_doi(doi), lambda s: s.get_pdf_images(doi, directory))
     return [str(image_path) for image_path in paths]
 
@@ -225,8 +207,10 @@ async def get_paper_pdf_images_by_url(
     url: Url,
     directory: LocalPath,
 ) -> list[str]:
-    """Extract the images of the pdf of the paper at the given url into the given directory and return their file paths; each image is named <citation key>_image_<number>; the doi is inferred from the url."""
-    paths = await _run(_source_for_url(url), lambda s: s.get_pdf_images_by_url(url, directory))
+    """Extract the images of the pdf of the paper at the given url into the given directory and return their file paths; each image is named <doi>_image_<number>; the doi is inferred from the url."""
+    paths = await _run(
+        _source_for_url(url), lambda s: s.get_pdf_images_by_url(url, directory)
+    )
     return [str(image_path) for image_path in paths]
 
 

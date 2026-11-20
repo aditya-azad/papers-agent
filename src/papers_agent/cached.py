@@ -1,4 +1,3 @@
-
 import asyncio
 import tempfile
 from collections.abc import Awaitable, Callable
@@ -6,8 +5,12 @@ from pathlib import Path
 from typing import TypeVar
 
 from papers_agent.cache import SourceCache
-from papers_agent.citation_key import unique_image_base, unique_pdf_path
-from papers_agent.pdf import TempPdf, extract_pdf_images, extract_pdf_text
+from papers_agent.pdf import (
+    TempPdf,
+    doi_file_base,
+    extract_pdf_images,
+    extract_pdf_text,
+)
 from papers_agent.types import (
     Doi,
     LocalPath,
@@ -42,13 +45,15 @@ class CachedSource(PaperSource):
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
         return await self._cached_query(
-            "search", {"keyword": keyword, "limit": limit},
+            "search",
+            {"keyword": keyword, "limit": limit},
             lambda: self._inner.search(keyword, limit),
         )
 
     async def semantic_search(self, query: NonEmptyStr, limit: int) -> list[Paper]:
         return await self._cached_query(
-            "semantic_search", {"query": query, "limit": limit},
+            "semantic_search",
+            {"query": query, "limit": limit},
             lambda: self._inner.semantic_search(query, limit),
         )
 
@@ -80,8 +85,8 @@ class CachedSource(PaperSource):
         return (await self._cached_text("references", doi, fetch)).split("\n")
 
     async def download_pdf(self, doi: Doi, directory: LocalPath) -> Path:
-        paper = await self.get_paper_by_doi(doi)
-        path = unique_pdf_path(Path(directory), paper.citation_key)
+        path = Path(directory) / f"{doi_file_base(doi)}.pdf"
+        path.parent.mkdir(parents=True, exist_ok=True)
         blob = await self._pdf_blob(doi)
         await asyncio.to_thread(path.write_bytes, blob)
         return path
@@ -93,10 +98,8 @@ class CachedSource(PaperSource):
 
     async def get_pdf_images(self, doi: Doi, directory: LocalPath) -> list[Path]:
         images_dir = Path(directory)
-        paper = await self.get_paper_by_doi(doi)
-        base = unique_image_base(images_dir, paper.citation_key)
         return await self._with_pdf_blob(
-            doi, lambda path: extract_pdf_images(path, images_dir, base)
+            doi, lambda path: extract_pdf_images(path, images_dir, doi_file_base(doi))
         )
 
     async def _cached_paper(

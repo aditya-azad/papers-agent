@@ -12,10 +12,8 @@ from pydantic import (
     Field,
     HttpUrl,
     StringConstraints,
-    model_validator,
 )
 
-from papers_agent.citation_key import citation_key as _compute_citation_key
 from papers_agent.errors import PaperNotFoundError, PaperSourceError
 
 
@@ -123,21 +121,6 @@ class Paper(BaseModel):
     publisher: PaperPublisher
     abstract: PaperAbstract
     published_at: UTCDatetime | None
-    citation_key: str = Field(
-        default="",
-        description=(
-            "authorShortTitleYear citation key; computed from the paper's own"
-            " fields when not explicitly provided"
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _compute_citation_key(self) -> Paper:
-        if not self.citation_key:
-            self.citation_key = _compute_citation_key(
-                self.name, self.authors, self.published_at
-            )
-        return self
 
 
 _EPOCH = datetime.min.replace(tzinfo=UTC)
@@ -185,9 +168,7 @@ class PaperSource:
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper] | None:
         results, _ = await self._query_all(lambda source: source.search(keyword, limit))
-        papers = [
-            paper for batch in results if batch is not None for paper in batch
-        ]
+        papers = [paper for batch in results if batch is not None for paper in batch]
         return self._unique_papers(papers, limit)
 
     async def semantic_search_ids(self, query: NonEmptyStr, limit: int) -> list[str]:
@@ -229,9 +210,7 @@ class PaperSource:
         results, _ = await self._query_all(
             lambda source: source.get_papers_in_date_range(start, end, limit)
         )
-        papers = [
-            paper for batch in results if batch is not None for paper in batch
-        ]
+        papers = [paper for batch in results if batch is not None for paper in batch]
         return self._unique_papers(papers, limit)
 
     async def get_paper_by_url(self, url: Url) -> Paper | None:
@@ -251,18 +230,6 @@ class PaperSource:
     ) -> Paper | None:
         results, _ = await self._query_all(call)
         return next((paper for paper in results if paper is not None), None)
-
-    async def citation_key(self, doi: Doi) -> str:
-        paper = await self.get_paper_by_doi(doi)
-        if paper is None:
-            raise PaperNotFoundError(f"no paper for doi {doi}")
-        return paper.citation_key
-
-    async def citation_key_for_url(self, url: Url) -> str:
-        paper = await self.get_paper_by_url(url)
-        if paper is None:
-            raise PaperNotFoundError(f"no paper for url {url}")
-        return paper.citation_key
 
     async def get_references(self, doi: Doi) -> list[str]:
         return await self._first_supported(
@@ -330,6 +297,4 @@ class PaperSource:
         return unique[:limit]
 
     def _unsupported(self, capability: str) -> PaperSourceError:
-        return PaperSourceError(
-            f"{type(self).__name__} does not support {capability}"
-        )
+        return PaperSourceError(f"{type(self).__name__} does not support {capability}")
