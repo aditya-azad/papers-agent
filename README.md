@@ -1,26 +1,40 @@
 # Papers Agent
 
-An MCP server that exposes scholarly paper source operations (search, metadata, references, PDF text and image extraction) as tools for AI coding agents.
-
-- Python ≥ 3.14
-- [uv](https://docs.astral.sh/uv/)
-
 ## Contents
 
-1. [Prerequisites](#prerequisites)
-2. [Build and run](#build-and-run)
-3. [The arXiv metadata database](#the-arxiv-metadata-database)
-4. [Install the MCP server](#install-the-mcp-server)
+1. [Publication sources](#publication-sources)
+2. [Why this project exists](#why-this-project-exists)
+3. [Prerequisites](#prerequisites)
+4. [Build and run](#build-and-run)
+5. [The arXiv metadata database](#the-arxiv-metadata-database)
+6. [Install the MCP server](#install-the-mcp-server)
    - [pi](#pi)
    - [Claude Code](#claude-code)
    - [OpenCode](#opencode)
    - [Codex](#codex)
-5. [Install the paper-summary skill](#install-the-paper-summary-skill)
-6. [Available tools](#available-tools)
+7. [Install the paper-summary skill](#install-the-paper-summary-skill)
+8. [Available tools](#available-tools)
+9. [Architecture](#architecture)
+10. [More publication sources](#more-publication-sources)
+
+## Publication sources
+
+- [x] arXiv
+- [ ] bioRxiv
+- [ ] OpenReview
+- [ ] DOI-based lookup via Crossref
+
+## Why this project exists
+
+AI coding agents are great at writing code, but when it comes to scholarly papers they hit a wall. Ask an agent to "summarize this paper" and it either lacks the tools to search arXiv, pull metadata, or follow reference chains, or it has to trawl the live arXiv API, which is slow, rate-limited, and awkward to paginate through mid-task. Meanwhile, the paper's PDF sits on disk as a wall of two-column text that is tedious to extract cleanly.
+
+This project grew out of wanting to just say "take these papers and give me structured notes" and have it actually work. It packages scholarly paper operations — search, metadata, references, PDF text and image extraction — as MCP tools that any AI coding agent can call directly. A local arXiv metadata database keeps searches fast and unlimited, so agents can explore the literature the way researchers do: iteratively and without waiting on a remote API.
+
+The project is intentionally small and personal, but it is open for anyone to use, contribute to, or give feedback on — issues and pull requests are welcome. It stands on the work of others, notably [arXiv](https://arxiv.org) for open metadata access and the [Kaggle arXiv dataset](https://www.kaggle.com/datasets/Cornell-University/arxiv) that powers the local database.
 
 ## Prerequisites
 
-Install Python 3.14+ and UV. Pick your operating system:
+Install Python 3.14+ and [uv](https://docs.astral.sh/uv/). Pick your operating system:
 
 ### Linux / macOS
 
@@ -28,7 +42,7 @@ Install Python 3.14+ and UV. Pick your operating system:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Or if you use [mise](https://mise.jdx.dev/) to manage your development environment, just run the follwing in this directory to install Python 3.14 and UV:
+Or if you use [mise](https://mise.jdx.dev/) to manage your development environment, just run the following in this directory to install Python 3.14 and uv:
 
 ```sh
 mise install
@@ -129,7 +143,13 @@ Or add it manually to `~/.pi/agent/mcp.json` (global) or `.pi/mcp.json` (project
 claude mcp add papers -- uv run --directory "$PAPERS_AGENT_DIR" papers-agent
 ```
 
-Or add it to `~/.claude.json` (global) or `.mcp.json` (project root, shareable via git):
+Verify with:
+
+```sh
+claude mcp list
+```
+
+Or add it manually to `~/.claude.json` (global) or `.mcp.json` (project root, shareable via git):
 
 ```json
 {
@@ -140,12 +160,6 @@ Or add it to `~/.claude.json` (global) or `.mcp.json` (project root, shareable v
     }
   }
 }
-```
-
-Verify with:
-
-```sh
-claude mcp list
 ```
 
 > **Windows note:** native Windows builds of Claude Code launch MCP servers through `cmd`, so wrap the command instead:
@@ -163,7 +177,7 @@ claude mcp list
 
 ### OpenCode
 
-Add the server to `~/.config/opencode/opencode.json` (global) or `opencode.json` (project):
+OpenCode has no install command, so add the server to `~/.config/opencode/opencode.json` (global) or `opencode.json` (project):
 
 ```json
 {
@@ -195,7 +209,7 @@ Verify by running `opencode` and checking that the `papers` server appears in `/
 
 ### Codex
 
-Codex configures MCP servers in `~/.codex/config.toml` (TOML, not JSON):
+Codex has no install command either and configures MCP servers in `~/.codex/config.toml` (TOML, not JSON):
 
 ```toml
 [mcp_servers.papers]
@@ -225,19 +239,42 @@ For other agents, copy or symlink the skill into their skills directory, e.g. `~
 
 ## Available tools
 
+Most tools come in `..._by_url` / `..._by_doi` pairs that do the same job and differ only in how the paper is identified. For the `url` variants the source and doi are inferred automatically, so you can pass an arXiv abstract or pdf page link straight from a search result. A paper's *citation key* is the short identifier used to cite it (for example `vaswani2017attention`).
+
 | Tool | Description |
 |---|---|
 | `get_sources` | List the names of all registered paper sources. |
 | `keyword_search` | Keyword search against a paper source (arXiv). |
 | `semantic_search` | Semantic search by natural-language description (arXiv via alphaXiv embeddings). |
 | `get_papers_in_date_range` | List papers from a source published within a date range. |
-| `get_paper_metadata_by_url` | Fetch the metadata of a single paper by its url (arXiv abstract or pdf page); the source is inferred from the url. |
-| `get_paper_metadata_by_doi` | Fetch the metadata of a single paper by its doi; the source is inferred from the doi. |
-| `get_paper_metadata_references_by_doi` | Fetch the bibliography of a paper (by doi) as raw reference strings. |
-| `get_paper_metadata_references_by_url` | Fetch the bibliography of a paper at the given url (arXiv abstract or pdf page) as raw reference strings; the doi is inferred from the url. |
-| `get_paper_metadata_citation_key_by_url` | Return the citation key of a paper by url. |
-| `get_paper_metadata_citation_key_by_doi` | Return the citation key of a paper by doi. |
-| `get_paper_pdf_text_by_doi` | Return the full text extracted from the pdf of a paper (by doi). |
-| `get_paper_pdf_text_by_url` | Return the full text extracted from the pdf of a paper at the given url (arXiv abstract or pdf page); the doi is inferred from the url. |
-| `get_paper_pdf_images_by_doi` | Extract the images of a paper's pdf (by doi) into a directory and return their file paths, named `<citation key>_image_<number>.png`. |
-| `get_paper_pdf_images_by_url` | Extract the images of a paper's pdf (by url, arXiv abstract or pdf page) into a directory and return their file paths, named `<citation key>_image_<number>.png`; the doi is inferred from the url. |
+| `get_paper_metadata_by_url` | Fetch the metadata of a single paper by url. |
+| `get_paper_metadata_by_doi` | Fetch the metadata of a single paper by doi. |
+| `get_paper_metadata_references_by_doi` | Fetch the bibliography of a paper as raw reference strings. |
+| `get_paper_metadata_references_by_url` | Fetch the bibliography of a paper as raw reference strings. |
+| `get_paper_metadata_citation_key_by_url` | Return the citation key of a paper. |
+| `get_paper_metadata_citation_key_by_doi` | Return the citation key of a paper. |
+| `get_paper_pdf_text_by_doi` | Return the full text extracted from a paper's pdf. |
+| `get_paper_pdf_text_by_url` | Return the full text extracted from a paper's pdf. |
+| `get_paper_pdf_images_by_doi` | Extract a paper's pdf images into a directory and return their file paths, named `<citation key>_image_<number>.png`. |
+| `get_paper_pdf_images_by_url` | Extract a paper's pdf images into a directory and return their file paths, named `<citation key>_image_<number>.png`. |
+
+## Architecture
+
+The project is a small, layered Python package (`src/papers_agent/`, ~2,600 lines). Each layer only knows the one below it, so any layer can be read on its own:
+
+1. **MCP tools** (`server.py`) — one function per tool from the table above, plus `get_sources` and `backup_status`. When a tool receives a url or doi, it picks the right source automatically; the agent never has to.
+2. **Caching** (`cache.py`, `cached.py`) — every source is wrapped in a cache that stores lookups in a small sqlite database (`~/.papers-agent-cache/`) for three days. Repeated questions are answered instantly, and stale entries are evicted before every tool call.
+3. **Sources** (`sources/`) — this is where the actual paper knowledge lives, behind one shared interface (`PaperSource` in `types.py`):
+   - `ArxivBackupSource` — the local arXiv metadata database from [The arXiv metadata database](#the-arxiv-metadata-database), for fast, unlimited search and lookups.
+   - `ArxivSource` — the live arXiv API (and alphaXiv for semantic search), used when the local database is missing or doesn't have the paper.
+   - `ChainedSource` — tries the local database first and falls back to the live API, so tools work with or without the multi-gigabyte download.
+4. **PDF handling** (`pdf.py`) — downloads a paper's pdf to a temporary file and uses PyMuPDF to pull out plain text and images. `citation_key.py` turns a paper into the short identifier used to name those files and cite them.
+5. **Plumbing** (`config.py` reads `~/.config/papers-agent/config.toml`; `errors.py` and `types.py` hold the shared error and paper types; `sources/arxiv_index.py` builds the full-text, pub-date and doi indexes described under [Indexing](#indexing); `sources/kaggle_import.py` is the importer CLI).
+
+A typical tool call travels the whole stack: the agent asks for a paper by url → `server.py` recognises the arXiv link (`sources/arxiv_paper.py`) → the cached, chained source checks the three-day cache, then the local database, then the live API → the pdf is downloaded and extracted only when text or images were asked for.
+
+## More publication sources
+
+Everything today works with arXiv, but the project was built for more. None of the tools are arXiv-specific: they talk to sources through the single `PaperSource` interface described in [Architecture](#architecture), and the server already routes by doi and url instead of hard-coding arXiv addresses. A new publisher means implementing that one interface (search, metadata, references, and a way to reach the paper's pdf) and registering it in `server.py`. The tool table stays the same: `get_sources` lists the new source by name, and the url and doi routing picks it up automatically.
+
+Support for additional publication sources is planned for a future release — see [Publication sources](#publication-sources) for what is on the list and what has landed. If there is a venue or publisher you would like to see supported, say so in an issue — it directly shapes the priority order.
