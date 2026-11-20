@@ -42,7 +42,10 @@ class ChainedSource(PaperSource):
         self._prepare()
         candidates: list[Paper] = []
         for source in self._sources:
-            papers = await source.search(keyword, limit)
+            try:
+                papers = await source.search(keyword, limit)
+            except PaperSourceError:
+                continue
             if papers is None:
                 continue
             candidates.extend(papers)
