@@ -13,6 +13,10 @@
    - [OpenCode](#opencode)
    - [Codex](#codex)
 7. [Install the skills](#install-the-skills)
+   - [pi](#pi-1)
+   - [Claude Code](#claude-code-1)
+   - [OpenCode](#opencode-1)
+   - [Codex](#codex-1)
 8. [Available tools](#available-tools)
 9. [Architecture](#architecture)
 10. [More publication sources](#more-publication-sources)
@@ -225,6 +229,10 @@ The repository ships companion [skills](skills/) for AI coding agents.
 
 Skills are intentionally **not** placed in the auto-discovered project skills directory (`.agents/skills/`): they are meant to be installed into your agent, not tied to this checkout.
 
+All agents below expect the absolute path to this checkout as `$PAPERS_AGENT_DIR` (see [Install the MCP server](#install-the-mcp-server)).
+
+### pi
+
 Point pi at the checkout's `skills/` directory in `~/.pi/agent/settings.json`:
 
 ```json
@@ -233,7 +241,37 @@ Point pi at the checkout's `skills/` directory in `~/.pi/agent/settings.json`:
 }
 ```
 
-For other agents, copy or symlink each skill into their skills directory, e.g. `~/.claude/skills/paper-summary` (Claude Code) or `~/.config/opencode/skills/paper-summary` (OpenCode).
+### Claude Code
+
+Claude Code loads personal skills from `~/.claude/skills/`. Symlink the skills in (a plain copy would drift out of date):
+
+```sh
+mkdir -p ~/.claude/skills
+ln -s "$PAPERS_AGENT_DIR/skills/paper-summary" ~/.claude/skills/paper-summary
+```
+
+> **Windows note:** creating symlinks requires PowerShell running as Administrator (or Developer Mode). Alternatively, copy: `Copy-Item -Recurse "$env:PAPERS_AGENT_DIR\skills\paper-summary" "$env:USERPROFILE\.claude\skills\paper-summary"`.
+
+### OpenCode
+
+OpenCode loads global skills from `~/.config/opencode/skills/`, or from extra sources via the `skills` array in `opencode.json` (project) or `~/.config/opencode/opencode.json` (global) — the latter means no copying, pointing straight at the checkout:
+
+```json
+{
+  "skills": ["/path/to/papers-agent/skills"]
+}
+```
+
+If you already installed the skills for Claude Code, OpenCode picks up `~/.claude/skills` as a compatibility source and you don't need anything else.
+
+### Codex
+
+Codex reads user-level skills from `~/.agents/skills/` and follows symlinked skill directories:
+
+```sh
+mkdir -p ~/.agents/skills
+ln -s "$PAPERS_AGENT_DIR/skills/paper-summary" ~/.agents/skills/paper-summary
+```
 
 ## Available tools
 
