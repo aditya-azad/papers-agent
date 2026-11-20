@@ -1,22 +1,21 @@
 import asyncio
 import json
-import os
 import sqlite3
-import sys
 from datetime import datetime
 from pathlib import Path
 
+from papers_agent.config import backup_db
 from papers_agent.errors import PaperNotFoundError, PaperSourceError
+from papers_agent.sources.arxiv_index import (
+    Indexer,
+    _connect,
+    _published_at,
+)
 from papers_agent.sources.arxiv_paper import (
     ARXIV_DOI_PREFIX,
     arxiv_id_from_doi,
     arxiv_id_from_url,
     paper_from_arxiv_fields,
-)
-from papers_agent.sources.arxiv_sync import (
-    Syncer,
-    _connect,
-    _published_at,
 )
 from papers_agent.types import (
     Doi,
@@ -28,8 +27,6 @@ from papers_agent.types import (
     UTCDatetime,
 )
 
-_BACKUP_DB_ENV = "PAPERS_AGENT_ARXIV_BACKUP_DB"
-
 _CHUNK = 100
 
 _PAPER_ROW_COLUMNS = "id, title, authors_parsed, versions, update_date, doi, abstract"
@@ -40,14 +37,6 @@ _PAPER_ROW_COLUMNS_PREFIXED = (
 _PAPER_ROW_QUERY = (
     f"SELECT {_PAPER_ROW_COLUMNS} FROM papers WHERE id = ?"
 )
-
-
-def _default_backup_db() -> Path:
-    env = os.environ.get(_BACKUP_DB_ENV)
-    if env:
-        return Path(env)
-    data_home = os.environ.get("XDG_DATA_HOME") or "~/.local/share"
-    return Path(data_home).expanduser() / "papers-agent" / "arxiv" / "metadata.sqlite"
 
 
 def _authors_from_json(value: str | None) -> list[str]:
@@ -96,19 +85,15 @@ class ArxivBackupSource(PaperSource):
     source = "arxiv"
 
     def __init__(self, db_path: Path | None = None) -> None:
-        self._db_path = (
-            db_path
-            if db_path is not None
-            else _default_backup_db()
-        )
-        self._syncer = Syncer(self._db_path)
+        self._db_path = db_path if db_path is not None else backup_db()
+        self._indexer = Indexer(self._db_path)
 
     @property
-    def syncer(self) -> Syncer:
-        return self._syncer
+    def indexer(self) -> Indexer:
+        return self._indexer
 
     def prepare(self) -> None:
-        self._syncer.ensure_started()
+        self._indexer.ensure_started()
 
     @classmethod
     def handles_url(cls, url: Url) -> bool:
@@ -240,16 +225,3 @@ class ArxivBackupSource(PaperSource):
             except sqlite3.Error:
                 return None
         return [paper for row in rows if (paper := _paper_from_row(row))]
-
-
-def main() -> None:
-    if len(sys.argv) >= 3 and sys.argv[1] == "--sync":
-        Syncer(Path(sys.argv[2])).run_sync()
-        return
-    raise SystemExit(
-        "usage: python -m papers_agent.sources.arxiv_backup --sync DB"
-    )
-
-
-if __name__ == "__main__":
-    main()

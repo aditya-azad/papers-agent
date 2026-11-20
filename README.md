@@ -58,42 +58,36 @@ uv run papers-agent
 
 ## The arXiv metadata database
 
-The server prefers a local arXiv metadata database (with full-text search and date-range queries) over the live arXiv API when one is available. It ships with a converter for the [Kaggle arXiv dataset](https://www.kaggle.com/datasets/Cornell-University/arxiv?resource=download), a JSON-lines snapshot of the [arXiv raw metadata](https://info.arxiv.org/help/bulk_data.html).
+The server prefers a local arXiv metadata database (with full-text search and date-range queries) over the live arXiv API when one is available. It ships with an importer for the [Kaggle arXiv dataset](https://www.kaggle.com/datasets/Cornell-University/arxiv?resource=download), a JSON-lines snapshot of the [arXiv raw metadata](https://info.arxiv.org/help/bulk_data.html).
 
 ### Download
 
 Download the dataset from the Kaggle page above (requires a free Kaggle account). The zip contains a single ~5.7 GB file, `arxiv-metadata-oai-snapshot.json`, with one JSON record per paper (~2.5M papers).
 
-### Convert
+### Import
 
-The converter reads the JSON (directly from the zip, no need to extract it) and writes the sqlite dump database this repository expects. It takes the input file (the Kaggle `archive.zip` or the extracted `arxiv-metadata-oai-snapshot.json`) and an output directory, and writes `metadata.sqlite` into it:
+The importer reads the JSON (directly from the zip, no need to extract it) and writes the search database this repository expects. It takes the input file (the Kaggle `archive.zip` or the extracted `arxiv-metadata-oai-snapshot.json`) and writes the papers into the `backup_db` path from [Configuration](#configuration):
 
 ```sh
-uv run python -m papers_agent.sources.kaggle_import \
-  /path/to/archive.zip /path/to/dump-dir
+uv run python -m papers_agent.sources.kaggle_import /path/to/archive.zip
 ```
 
 Importing all ~2.5M records takes a few minutes and produces a multi-gigabyte database.
 
-### Build the search database
+### Indexing
 
-The server does not query the dump directly; it syncs the dump into a searchable database with FTS, date and DOI indexes. Build it once by pointing `PAPERS_AGENT_ARXIV_DUMP_DB` at the dump you just created:
+No separate build step is needed. On first use the server checks whether the papers in the search database are already indexed (full-text search, pub-date and DOI indexes) and builds the indexes automatically in the background if they are not. It re-indexes automatically whenever the database contents change; the `backup_status` MCP tool reports indexing progress.
 
-```sh
-PAPERS_AGENT_ARXIV_DUMP_DB=/path/to/dump-dir/metadata.sqlite \
-  uv run python -m papers_agent.sources.arxiv_backup --sync /path/to/backup.sqlite
+### Configuration
+
+The search database is configured once in `~/.config/papers-agent/config.toml` and never set again:
+
+```toml
+[arxiv]
+backup_db = "/path/to/backup.sqlite"
 ```
 
-### Custom paths
-
-Both paths can be overridden with environment variables, which is useful if you keep the databases elsewhere:
-
-| Variable | Purpose |
-|---|---|
-| `PAPERS_AGENT_ARXIV_DUMP_DB` | Dump database (converted from the Kaggle JSON) |
-| `PAPERS_AGENT_ARXIV_BACKUP_DB` | Searchable database the server reads from |
-
-Set them in your MCP server configuration (most agents support an `env` object next to `command`/`args`), with `PAPERS_AGENT_ARXIV_BACKUP_DB` pointing at the search database built above.
+The config file is read directly by the server, so no environment variables are needed in your MCP server configuration.
 
 ## Install the MCP server
 

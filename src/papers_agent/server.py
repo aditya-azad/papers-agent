@@ -207,8 +207,8 @@ def get_sources() -> list[str]:
 @mcp.tool()
 def backup_status() -> dict[str, str]:
     """Report the state of the local arxiv metadata database:
-    ready, syncing (with progress), stale or missing."""
-    return ArxivBackupSource().syncer.status()
+    ready, indexing (with progress), unindexed or missing."""
+    return ArxivBackupSource().indexer.status()
 
 
 @mcp.tool()

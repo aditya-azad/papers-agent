@@ -6,10 +6,10 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import IO
 
+from papers_agent.config import backup_db
+
 _BATCH_SIZE = 50_000
 _PROGRESS_EVERY = 200_000
-
-_DUMP_DB_NAME = "metadata.sqlite"
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS papers (
@@ -112,7 +112,7 @@ def main() -> None:
         description=(
             "Import the Kaggle arXiv metadata snapshot"
             " (arxiv-metadata-oai-snapshot.json) into the papers-agent"
-            " dump sqlite database"
+            " search database"
         )
     )
     parser.add_argument(
@@ -120,15 +120,11 @@ def main() -> None:
         type=Path,
         help="path to the Kaggle archive.zip or the extracted .json file",
     )
-    parser.add_argument(
-        "output_dir",
-        type=Path,
-        help="directory to write metadata.sqlite into",
-    )
     args = parser.parse_args()
     if not args.input.is_file():
         raise SystemExit(f"input file not found: {args.input}")
-    output_path = args.output_dir / _DUMP_DB_NAME
+    output_path = backup_db()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     total = convert(args.input, output_path)
     print(f"done: {total} records written to {output_path}")
 
