@@ -310,9 +310,3 @@ The project is a small, layered Python package (`src/papers_agent/`, ~2,500 line
 5. **Plumbing** (`config.py` reads `~/.config/papers-agent/config.toml`; `errors.py` and `types.py` hold the shared error and paper types; `sources/arxiv_backup/index.py` builds the full-text, pub-date and doi indexes described under [Indexing](#indexing); `sources/arxiv_backup/kaggle_import.py` is the importer CLI).
 
 A typical tool call travels the whole stack: the agent asks for a paper by url → `server.py` recognises the arXiv link (`sources/arxiv/paper.py`) → the cached composite source checks the three-day cache, then asks the local database first and falls back to the live api (or asks both, for searches) → the pdf is downloaded — and kept in the cache — only when text or images were asked for.
-
-## More publication sources
-
-Everything today works with arXiv, but the project was built for more. None of the tools are arXiv-specific: they talk to sources through the single `PaperSource` abstraction described in [Architecture](#architecture), and the server already routes by doi and url instead of hard-coding arXiv addresses. A new publisher means implementing a `PaperSource` subclass — a leaf with no sub-sources that overrides what it supports (search, metadata, references, and a way to reach the paper's pdf) — and registering it in `server.py`. The tool table stays the same: `get_sources` lists the new source by name, and the url and doi routing picks it up automatically.
-
-Support for additional publication sources is planned for a future release — see [Publication sources](#publication-sources) for what is on the list and what has landed. If there is a venue or publisher you would like to see supported, say so in an issue — it directly shapes the priority order.
