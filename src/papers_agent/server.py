@@ -13,7 +13,6 @@ from papers_agent.cached import CachedSource
 from papers_agent.errors import PaperSourceError
 from papers_agent.sources.arxiv import ArxivSource
 from papers_agent.sources.arxiv_backup import ArxivBackupSource
-from papers_agent.sources.chain import ChainedSource
 from papers_agent.types import (
     Doi,
     LocalPath,
@@ -59,7 +58,7 @@ mcp = MCPServer(
 
 _sources: dict[PaperSourceName, PaperSource] = {
     "arxiv": CachedSource(
-        ChainedSource([ArxivBackupSource(), ArxivSource()]),
+        PaperSource("arxiv", [ArxivBackupSource(), ArxivSource()]),
         cache=_cache,
     )
 }

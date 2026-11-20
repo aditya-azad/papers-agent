@@ -14,7 +14,6 @@ from papers_agent.types import (
     NonEmptyStr,
     Paper,
     PaperSource,
-    PaperSourceName,
     Url,
     UTCDatetime,
 )
@@ -24,12 +23,9 @@ T = TypeVar("T")
 
 class CachedSource(PaperSource):
     def __init__(self, inner: PaperSource, cache: SourceCache | None = None) -> None:
+        super().__init__(inner.source)
         self._inner = inner
         self._cache = cache if cache is not None else SourceCache()
-
-    @property
-    def source(self) -> PaperSourceName:
-        return self._inner.source
 
     @property
     def inner(self) -> PaperSource:

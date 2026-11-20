@@ -143,7 +143,8 @@ class _BibliographyExtractor(HTMLParser):
 
 
 class ArxivSource(PaperSource):
-    source = "arxiv"
+    def __init__(self) -> None:
+        super().__init__("arxiv")
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
         return await self._search_api(keyword, limit)
@@ -226,19 +227,16 @@ class ArxivSource(PaperSource):
         )
         return [self._paper_from_entry(entry) for entry in self._entries(data)]
 
-    @classmethod
-    def handles_url(cls, url: Url) -> bool:
+    def handles_url(self, url: Url) -> bool:
         return arxiv_id_from_url(url) is not None
 
-    @classmethod
-    def doi_for_url(cls, url: Url) -> Doi:
+    def doi_for_url(self, url: Url) -> Doi:
         arxiv_id = arxiv_id_from_url(url)
         if arxiv_id is None:
             raise PaperNotFoundError(f"no arxiv paper for url {url}")
         return f"{ARXIV_DOI_PREFIX}{base_arxiv_id(arxiv_id)}"
 
-    @classmethod
-    def handles_doi(cls, doi: Doi) -> bool:
+    def handles_doi(self, doi: Doi) -> bool:
         return arxiv_id_from_doi(doi) is not None
 
     async def get_paper_by_url(self, url: Url) -> Paper:

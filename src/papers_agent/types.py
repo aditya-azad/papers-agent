@@ -1,8 +1,9 @@
+import asyncio
 import re
-from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated, ClassVar, Literal
+from typing import Annotated, Literal
 
 from pydantic import (
     AfterValidator,
@@ -139,35 +140,59 @@ class Paper(BaseModel):
         return self
 
 
-class PaperSource(ABC):
-    source: ClassVar[PaperSourceName]
+_EPOCH = datetime.min.replace(tzinfo=UTC)
+
+
+class PaperSource:
+    source: PaperSourceName
+
+    def __init__(
+        self, source: PaperSourceName, sources: Sequence[PaperSource] = ()
+    ) -> None:
+        self.source = source
+        self._sources: tuple[PaperSource, ...] = tuple(sources)
+        self._prepared = False
 
     def prepare(self) -> None:
-        pass
+        if self._prepared:
+            return
+        self._prepared = True
+        for source in self._sources:
+            source.prepare()
 
-    @classmethod
-    @abstractmethod
-    def handles_url(cls, url: Url) -> bool:
-        pass
+    def handles_url(self, url: Url) -> bool:
+        return any(source.handles_url(url) for source in self._sources)
 
-    @classmethod
-    @abstractmethod
-    def handles_doi(cls, doi: Doi) -> bool:
-        pass
+    def handles_doi(self, doi: Doi) -> bool:
+        return any(source.handles_doi(doi) for source in self._sources)
 
-    @classmethod
-    @abstractmethod
-    def doi_for_url(cls, url: Url) -> Doi:
-        pass
+    def doi_for_url(self, url: Url) -> Doi:
+        for source in self._sources:
+            if source.handles_url(url):
+                return source.doi_for_url(url)
+        raise PaperNotFoundError(f"no paper for url {url}")
 
-    @abstractmethod
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper] | None:
-        pass
+        results, _ = await self._query_all(lambda source: source.search(keyword, limit))
+        papers = [
+            paper for batch in results if batch is not None for paper in batch
+        ]
+        return self._unique_papers(papers, limit)
 
     async def semantic_search_ids(self, query: NonEmptyStr, limit: int) -> list[str]:
-        raise PaperSourceError(
-            f"{type(self).__name__} does not support semantic search"
+        if not self._sources:
+            raise self._unsupported("semantic search")
+        results, _ = await self._query_all(
+            lambda source: source.semantic_search_ids(query, limit)
         )
+        seen: set[str] = set()
+        ids: list[str] = []
+        for batch in results:
+            for arxiv_id in batch:
+                if arxiv_id not in seen:
+                    seen.add(arxiv_id)
+                    ids.append(arxiv_id)
+        return ids[:limit]
 
     async def semantic_search(self, query: NonEmptyStr, limit: int) -> list[Paper]:
         ids = (await self.semantic_search_ids(query, limit))[:limit]
@@ -177,23 +202,40 @@ class PaperSource(ABC):
         return [paper for arxiv_id in ids if (paper := papers.get(arxiv_id))]
 
     async def papers_by_ids(self, arxiv_ids: list[str]) -> dict[str, Paper]:
-        raise PaperSourceError(
-            f"{type(self).__name__} does not support batch hydration"
+        if not self._sources:
+            raise self._unsupported("batch hydration")
+        results, _ = await self._query_all(
+            lambda source: source.papers_by_ids(arxiv_ids)
         )
+        papers: dict[str, Paper] = {}
+        for found in results:
+            papers.update(found)
+        return papers
 
-    @abstractmethod
     async def get_papers_in_date_range(
         self, start: UTCDatetime, end: UTCDatetime, limit: int
     ) -> list[Paper] | None:
-        pass
+        results, _ = await self._query_all(
+            lambda source: source.get_papers_in_date_range(start, end, limit)
+        )
+        papers = [
+            paper for batch in results if batch is not None for paper in batch
+        ]
+        return self._unique_papers(papers, limit)
 
-    @abstractmethod
     async def get_paper_by_url(self, url: Url) -> Paper | None:
-        pass
+        results, _ = await self._query_all(lambda source: source.get_paper_by_url(url))
+        for paper in results:
+            if paper is not None:
+                return paper
+        raise PaperNotFoundError(f"no paper for url {url}")
 
-    @abstractmethod
     async def get_paper_by_doi(self, doi: Doi) -> Paper | None:
-        pass
+        results, _ = await self._query_all(lambda source: source.get_paper_by_doi(doi))
+        for paper in results:
+            if paper is not None:
+                return paper
+        raise PaperNotFoundError(f"no paper for doi {doi}")
 
     async def citation_key(self, doi: Doi) -> str:
         paper = await self.get_paper_by_doi(doi)
@@ -208,27 +250,71 @@ class PaperSource(ABC):
         return paper.citation_key
 
     async def get_references(self, doi: Doi) -> list[str]:
-        raise PaperSourceError(
-            f"{type(self).__name__} does not support reference extraction"
+        return await self._first_supported(
+            "reference extraction", lambda source: source.get_references(doi)
         )
 
     async def get_references_by_url(self, url: Url) -> list[str]:
         return await self.get_references(self.doi_for_url(url))
 
-    @abstractmethod
     async def download_pdf(self, doi: Doi, directory: LocalPath) -> Path:
-        pass
+        return await self._first_supported(
+            "pdf download",
+            lambda source: source.download_pdf(doi, directory),
+        )
 
-    @abstractmethod
     async def get_pdf_text(self, doi: Doi) -> str:
-        pass
+        return await self._first_supported(
+            "pdf text extraction", lambda source: source.get_pdf_text(doi)
+        )
 
     async def get_pdf_text_by_url(self, url: Url) -> str:
         return await self.get_pdf_text(self.doi_for_url(url))
 
-    @abstractmethod
     async def get_pdf_images(self, doi: Doi, directory: LocalPath) -> list[Path]:
-        pass
+        return await self._first_supported(
+            "pdf image extraction",
+            lambda source: source.get_pdf_images(doi, directory),
+        )
 
     async def get_pdf_images_by_url(self, url: Url, directory: LocalPath) -> list[Path]:
         return await self.get_pdf_images(self.doi_for_url(url), directory)
+
+    async def _first_supported[S](
+        self,
+        capability: str,
+        call: Callable[[PaperSource], Awaitable[S]],
+    ) -> S:
+        values, errors = await self._query_all(call)
+        if values:
+            return values[0]
+        if errors:
+            raise errors[-1]
+        raise self._unsupported(capability)
+
+    async def _query_all[S](
+        self, call: Callable[[PaperSource], Awaitable[S]]
+    ) -> tuple[list[S], list[BaseException]]:
+        self.prepare()
+        outcomes = await asyncio.gather(
+            *(call(source) for source in self._sources),
+            return_exceptions=True,
+        )
+        values = [value for value in outcomes if not isinstance(value, BaseException)]
+        errors = [value for value in outcomes if isinstance(value, BaseException)]
+        return values, errors
+
+    def _unique_papers(self, papers: list[Paper], limit: int) -> list[Paper]:
+        seen: set[str] = set()
+        unique: list[Paper] = []
+        for paper in papers:
+            if paper.url not in seen:
+                seen.add(paper.url)
+                unique.append(paper)
+        unique.sort(key=lambda paper: paper.published_at or _EPOCH, reverse=True)
+        return unique[:limit]
+
+    def _unsupported(self, capability: str) -> PaperSourceError:
+        return PaperSourceError(
+            f"{type(self).__name__} does not support {capability}"
+        )

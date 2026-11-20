@@ -15,11 +15,11 @@ from papers_agent.sources.arxiv_paper import (
     ARXIV_DOI_PREFIX,
     arxiv_id_from_doi,
     arxiv_id_from_url,
+    base_arxiv_id,
     paper_from_arxiv_fields,
 )
 from papers_agent.types import (
     Doi,
-    LocalPath,
     NonEmptyStr,
     Paper,
     PaperSource,
@@ -82,9 +82,8 @@ def _paper_from_row(row: tuple) -> Paper | None:
 
 
 class ArxivBackupSource(PaperSource):
-    source = "arxiv"
-
     def __init__(self, db_path: Path | None = None) -> None:
+        super().__init__("arxiv")
         self._db_path = db_path if db_path is not None else backup_db()
         self._indexer = Indexer(self._db_path)
 
@@ -95,19 +94,16 @@ class ArxivBackupSource(PaperSource):
     def prepare(self) -> None:
         self._indexer.ensure_started()
 
-    @classmethod
-    def handles_url(cls, url: Url) -> bool:
+    def handles_url(self, url: Url) -> bool:
         return arxiv_id_from_url(url) is not None
 
-    @classmethod
-    def doi_for_url(cls, url: Url) -> Doi:
+    def doi_for_url(self, url: Url) -> Doi:
         arxiv_id = arxiv_id_from_url(url)
         if arxiv_id is None:
             raise PaperNotFoundError(f"no arxiv paper for url {url}")
-        return f"{ARXIV_DOI_PREFIX}{arxiv_id}"
+        return f"{ARXIV_DOI_PREFIX}{base_arxiv_id(arxiv_id)}"
 
-    @classmethod
-    def handles_doi(cls, doi: Doi) -> bool:
+    def handles_doi(self, doi: Doi) -> bool:
         return arxiv_id_from_doi(doi) is not None
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper] | None:
@@ -134,23 +130,6 @@ class ArxivBackupSource(PaperSource):
         if arxiv_id is None:
             return None
         return await asyncio.to_thread(self._paper_by_id_sync, arxiv_id)
-
-    async def download_pdf(self, doi: Doi, directory: LocalPath) -> Path:
-        raise PaperSourceError(
-            "ArxivBackupSource does not support pdf downloads"
-        )
-
-    async def get_pdf_text(self, doi: Doi) -> str:
-        raise PaperSourceError(
-            "ArxivBackupSource does not support pdf text extraction"
-        )
-
-    async def get_pdf_images(
-        self, doi: Doi, directory: LocalPath
-    ) -> list[Path]:
-        raise PaperSourceError(
-            "ArxivBackupSource does not support pdf image extraction"
-        )
 
     def _paper_by_id_sync(self, arxiv_id: str) -> Paper | None:
         with _connect(self._db_path) as conn:
