@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from papers_agent.config import backup_db
-from papers_agent.errors import PaperNotFoundError, PaperSourceError
+from papers_agent.errors import PaperSourceError
 from papers_agent.sources.arxiv_index import (
     Indexer,
     _connect,
@@ -15,7 +15,7 @@ from papers_agent.sources.arxiv_paper import (
     ARXIV_DOI_PREFIX,
     arxiv_id_from_doi,
     arxiv_id_from_url,
-    base_arxiv_id,
+    doi_for_arxiv_url,
     paper_from_arxiv_fields,
 )
 from papers_agent.types import (
@@ -82,6 +82,8 @@ def _paper_from_row(row: tuple) -> Paper | None:
 
 
 class ArxivBackupSource(PaperSource):
+    doi_prefix = ARXIV_DOI_PREFIX
+
     def __init__(self, db_path: Path | None = None) -> None:
         super().__init__("arxiv")
         self._db_path = db_path if db_path is not None else backup_db()
@@ -94,17 +96,8 @@ class ArxivBackupSource(PaperSource):
     def prepare(self) -> None:
         self._indexer.ensure_started()
 
-    def handles_url(self, url: Url) -> bool:
-        return arxiv_id_from_url(url) is not None
-
     def doi_for_url(self, url: Url) -> Doi:
-        arxiv_id = arxiv_id_from_url(url)
-        if arxiv_id is None:
-            raise PaperNotFoundError(f"no arxiv paper for url {url}")
-        return f"{ARXIV_DOI_PREFIX}{base_arxiv_id(arxiv_id)}"
-
-    def handles_doi(self, doi: Doi) -> bool:
-        return arxiv_id_from_doi(doi) is not None
+        return doi_for_arxiv_url(url)
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper] | None:
         return await asyncio.to_thread(self._search_sync, keyword, limit)

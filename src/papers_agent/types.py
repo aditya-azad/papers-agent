@@ -145,6 +145,7 @@ _EPOCH = datetime.min.replace(tzinfo=UTC)
 
 class PaperSource:
     source: PaperSourceName
+    doi_prefix: str | None = None
 
     def __init__(
         self, source: PaperSourceName, sources: Sequence[PaperSource] = ()
@@ -161,15 +162,25 @@ class PaperSource:
             source.prepare()
 
     def handles_url(self, url: Url) -> bool:
-        return any(source.handles_url(url) for source in self._sources)
+        if self._sources:
+            return any(source.handles_url(url) for source in self._sources)
+        try:
+            self.doi_for_url(url)
+        except PaperNotFoundError:
+            return False
+        return True
 
     def handles_doi(self, doi: Doi) -> bool:
-        return any(source.handles_doi(doi) for source in self._sources)
+        if self._sources:
+            return any(source.handles_doi(doi) for source in self._sources)
+        return self.doi_prefix is not None and doi.startswith(self.doi_prefix)
 
     def doi_for_url(self, url: Url) -> Doi:
         for source in self._sources:
-            if source.handles_url(url):
+            try:
                 return source.doi_for_url(url)
+            except PaperNotFoundError:
+                continue
         raise PaperNotFoundError(f"no paper for url {url}")
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper] | None:
@@ -224,18 +235,22 @@ class PaperSource:
         return self._unique_papers(papers, limit)
 
     async def get_paper_by_url(self, url: Url) -> Paper | None:
-        results, _ = await self._query_all(lambda source: source.get_paper_by_url(url))
-        for paper in results:
-            if paper is not None:
-                return paper
-        raise PaperNotFoundError(f"no paper for url {url}")
+        paper = await self._first_paper(lambda source: source.get_paper_by_url(url))
+        if paper is None:
+            raise PaperNotFoundError(f"no paper for url {url}")
+        return paper
 
     async def get_paper_by_doi(self, doi: Doi) -> Paper | None:
-        results, _ = await self._query_all(lambda source: source.get_paper_by_doi(doi))
-        for paper in results:
-            if paper is not None:
-                return paper
-        raise PaperNotFoundError(f"no paper for doi {doi}")
+        paper = await self._first_paper(lambda source: source.get_paper_by_doi(doi))
+        if paper is None:
+            raise PaperNotFoundError(f"no paper for doi {doi}")
+        return paper
+
+    async def _first_paper(
+        self, call: Callable[[PaperSource], Awaitable[Paper | None]]
+    ) -> Paper | None:
+        results, _ = await self._query_all(call)
+        return next((paper for paper in results if paper is not None), None)
 
     async def citation_key(self, doi: Doi) -> str:
         paper = await self.get_paper_by_doi(doi)

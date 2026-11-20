@@ -2,6 +2,7 @@ import asyncio
 import os
 import secrets
 import xml.etree.ElementTree as ET
+from collections.abc import Callable
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -22,9 +23,9 @@ from papers_agent.sources.arxiv_paper import (
     ARXIV_DOI_PREFIX,
     ARXIV_ID_PATTERN,
     arxiv_id_for_doi,
-    arxiv_id_from_doi,
     arxiv_id_from_url,
     base_arxiv_id,
+    doi_for_arxiv_url,
     paper_from_arxiv_fields,
 )
 from papers_agent.types import (
@@ -143,13 +144,12 @@ class _BibliographyExtractor(HTMLParser):
 
 
 class ArxivSource(PaperSource):
+    doi_prefix = ARXIV_DOI_PREFIX
+
     def __init__(self) -> None:
         super().__init__("arxiv")
 
     async def search(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
-        return await self._search_api(keyword, limit)
-
-    async def _search_api(self, keyword: NonEmptyStr, limit: int) -> list[Paper]:
         data = await self._request(
             _BASE_URL,
             {
@@ -227,17 +227,8 @@ class ArxivSource(PaperSource):
         )
         return [self._paper_from_entry(entry) for entry in self._entries(data)]
 
-    def handles_url(self, url: Url) -> bool:
-        return arxiv_id_from_url(url) is not None
-
     def doi_for_url(self, url: Url) -> Doi:
-        arxiv_id = arxiv_id_from_url(url)
-        if arxiv_id is None:
-            raise PaperNotFoundError(f"no arxiv paper for url {url}")
-        return f"{ARXIV_DOI_PREFIX}{base_arxiv_id(arxiv_id)}"
-
-    def handles_doi(self, doi: Doi) -> bool:
-        return arxiv_id_from_doi(doi) is not None
+        return doi_for_arxiv_url(url)
 
     async def get_paper_by_url(self, url: Url) -> Paper:
         arxiv_id = arxiv_id_from_url(url)
@@ -255,10 +246,7 @@ class ArxivSource(PaperSource):
         return await self._download_pdf_by_id(arxiv_id, path)
 
     async def get_pdf_text(self, doi: Doi) -> str:
-        arxiv_id = arxiv_id_for_doi(doi)
-        with TempPdf() as tmp_path:
-            await self._download_pdf_by_id(arxiv_id, tmp_path)
-            return await asyncio.to_thread(extract_pdf_text, tmp_path)
+        return await self._with_pdf(doi, extract_pdf_text)
 
     async def get_references(self, doi: Doi) -> list[str]:
         arxiv_id = base_arxiv_id(arxiv_id_for_doi(doi))
@@ -277,15 +265,17 @@ class ArxivSource(PaperSource):
         return references
 
     async def get_pdf_images(self, doi: Doi, directory: LocalPath) -> list[Path]:
-        arxiv_id = arxiv_id_for_doi(doi)
-        paper = await self._get_by_id(arxiv_id)
+        paper = await self._get_by_id(arxiv_id_for_doi(doi))
         images_dir = Path(directory)
         base = unique_image_base(images_dir, paper.citation_key)
+        return await self._with_pdf(
+            doi, lambda tmp_path: extract_pdf_images(tmp_path, images_dir, base)
+        )
+
+    async def _with_pdf[T](self, doi: Doi, extract: Callable[[Path], T]) -> T:
         with TempPdf() as tmp_path:
-            await self._download_pdf_by_id(arxiv_id, tmp_path)
-            return await asyncio.to_thread(
-                extract_pdf_images, tmp_path, images_dir, base
-            )
+            await self._download_pdf_by_id(arxiv_id_for_doi(doi), tmp_path)
+            return await asyncio.to_thread(extract, tmp_path)
 
     async def _download_pdf_by_id(self, arxiv_id: str, path: Path) -> Path:
         url = _PDF_URL_TEMPLATE.format(arxiv_id=arxiv_id)

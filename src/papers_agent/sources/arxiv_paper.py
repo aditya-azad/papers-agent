@@ -1,4 +1,3 @@
-
 import re
 from datetime import datetime
 
@@ -48,6 +47,17 @@ def base_arxiv_id(arxiv_id: str) -> str:
     return _VERSION_SUFFIX_PATTERN.sub("", arxiv_id.lower())
 
 
+def doi_for_arxiv_id(arxiv_id: str) -> Doi:
+    return f"{ARXIV_DOI_PREFIX}{base_arxiv_id(arxiv_id)}"
+
+
+def doi_for_arxiv_url(url: Url) -> Doi:
+    arxiv_id = arxiv_id_from_url(url)
+    if arxiv_id is None:
+        raise PaperNotFoundError(f"no arxiv paper for url {url}")
+    return doi_for_arxiv_id(arxiv_id)
+
+
 def paper_from_arxiv_fields(
     *,
     base_id: str,
@@ -62,7 +72,7 @@ def paper_from_arxiv_fields(
             source="arxiv",
             name=name,
             url=f"https://arxiv.org/abs/{base_id}",
-            doi=doi or f"{ARXIV_DOI_PREFIX}{base_id}",
+            doi=doi or doi_for_arxiv_id(base_id),
             authors=authors,
             publisher=PUBLISHER,
             abstract=abstract,
